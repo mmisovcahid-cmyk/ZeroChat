@@ -36,7 +36,8 @@ class ZeroChatApp:
 
         # device_id -> {"name", "ip", "mac", "last_seen", "online"}
         self.devices = {}
-        # device_id -> [mesaj paketleri]
+        # device_id -> [(is_outgoing, mesaj_paketi), ...]
+        # is_outgoing bilgisi mesajın kime ait olduğunu gösterir
         self.chats = {}
 
         self.network = None
@@ -137,8 +138,8 @@ class ZeroChatApp:
         if sender_id == self.user_id:
             return
 
-        # Sohbet geçmişine ekle
-        self.chats.setdefault(sender_id, []).append(pkt)
+        # Sohbet geçmişine ekle (gelen mesaj -> is_outgoing=False)
+        self.chats.setdefault(sender_id, []).append((False, pkt))
 
         # Sidebar'ı güncelle
         if self.sidebar:
@@ -226,11 +227,11 @@ class ZeroChatApp:
 
         self.chat_area.open_chat(contact_id, display_name, device_info)
 
-        # Kayıtlı mesajları yükle
-        for pkt in self.chats.get(contact_id, []):
+        # Kayıtlı mesajları yükle (yön bilgisiyle birlikte)
+        for is_outgoing, pkt in self.chats.get(contact_id, []):
             self.chat_area.add_message(
                 pkt["content"],
-                is_outgoing=False,
+                is_outgoing=is_outgoing,
                 timestamp=pkt["timestamp"],
                 sender_name=pkt["sender_name"],
             )
@@ -242,7 +243,7 @@ class ZeroChatApp:
 
         # Kendi ekranında göster
         pkt = create_message(self.user_id, self.user_name, target_id, content)
-        self.chats.setdefault(target_id, []).append(pkt)
+        self.chats.setdefault(target_id, []).append((True, pkt))
 
         self.chat_area.add_message(
             content,
