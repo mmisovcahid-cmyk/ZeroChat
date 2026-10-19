@@ -5,6 +5,7 @@ Canlı anket oluşturma, oy verme ve sonuç gösterme.
 
 import tkinter as tk
 from config import COLORS
+from gui.theme import FONTS
 
 
 class PollCard(tk.Frame):
@@ -41,21 +42,21 @@ class PollCard(tk.Frame):
 
         tk.Label(
             header, text="📊 ANKET",
-            font=("Segoe UI", 8, "bold"), bg=COLORS["incoming_bubble"],
+            font=FONTS["tiny_bold"], bg=COLORS["incoming_bubble"],
             fg=COLORS["accent"],
         ).pack(side="left")
 
         if not self.poll.get("open", True):
             tk.Label(
                 header, text="KAPANDI",
-                font=("Segoe UI", 8, "bold"), bg=COLORS["incoming_bubble"],
+                font=FONTS["tiny_bold"], bg=COLORS["incoming_bubble"],
                 fg=COLORS["text_secondary"],
             ).pack(side="right")
 
         # Soru
         tk.Label(
             self, text=self.poll.get("question", ""),
-            font=("Segoe UI", 11, "bold"), bg=COLORS["incoming_bubble"],
+            font=FONTS["subtitle"], bg=COLORS["incoming_bubble"],
             fg=COLORS["text"], wraplength=380, justify="left",
         ).pack(anchor="w", pady=(4, 8))
 
@@ -71,18 +72,20 @@ class PollCard(tk.Frame):
         total = len(self.poll.get("votes", {}))
         self.total_label = tk.Label(
             footer, text=f"{total} oy",
-            font=("Segoe UI", 8), bg=COLORS["incoming_bubble"],
+            font=FONTS["tiny"], bg=COLORS["incoming_bubble"],
             fg=COLORS["text_secondary"],
         )
         self.total_label.pack(side="left")
 
         if self.is_creator and self.poll.get("open", True):
-            tk.Button(
-                footer, text="Anketi Kapat", bg=COLORS["background"],
-                fg=COLORS["text_secondary"], relief="flat",
-                font=("Segoe UI", 8),
-                command=lambda: self.on_close(self.poll_id),
+            tk.Label(
+                footer, text="Anketi Kapat", font=FONTS["tiny_bold"],
+                bg=COLORS["incoming_bubble"], fg=COLORS["accent"],
+                cursor="hand2",
             ).pack(side="right")
+            footer.winfo_children()[-1].bind(
+                "<Button-1>", lambda e: self.on_close(self.poll_id)
+            )
 
     def _build_option(self, index, option):
         """Tek bir seçeneği oluşturur."""
@@ -99,37 +102,36 @@ class PollCard(tk.Frame):
 
         if can_vote:
             # Buton görünümü
-            btn = tk.Button(
-                row, text=option, bg=COLORS["background"], fg=COLORS["text"],
-                relief="flat", font=("Segoe UI", 10), anchor="w",
+            btn = tk.Label(
+                row, text=option, bg=COLORS["input_bg"], fg=COLORS["text"],
+                font=FONTS["body"], anchor="w", cursor="hand2",
                 padx=10, pady=6,
-                command=lambda i=index: self._vote(i),
             )
             btn.pack(side="left", fill="x", expand=True)
+            btn.bind("<Button-1>", lambda e, i=index: self._vote(i))
             self.option_widgets.append((row, None, btn))
         else:
             # Sonuç çubuğu (sol) + yüzde (sağ) - yan yana, çakışmadan
-            bar_frame = tk.Frame(row, bg=COLORS["background"], height=24)
+            bar_frame = tk.Frame(row, bg=COLORS["input_bg"], height=24)
             bar_frame.pack(side="left", fill="x", expand=True)
             bar_frame.pack_propagate(False)
 
             is_mine = (self.voted_index == index)
             bar_color = COLORS["accent"] if is_mine else "#8FD9A8"
 
-            # Yüzde kadar dolu kısım
             if percent > 0:
                 fill = tk.Frame(bar_frame, bg=bar_color)
                 fill.place(x=0, y=0, relheight=1, relwidth=percent / 100)
 
             tk.Label(
-                bar_frame, text=option, bg=COLORS["background"],
-                fg=COLORS["text"], font=("Segoe UI", 9), anchor="w",
+                bar_frame, text=option, bg=COLORS["input_bg"],
+                fg=COLORS["text"], font=FONTS["small"], anchor="w",
             ).place(x=8, y=0, relheight=1)
 
             tk.Label(
                 row, text=f"%{percent:.0f} ({count})",
                 bg=COLORS["incoming_bubble"], fg=COLORS["text_secondary"],
-                font=("Segoe UI", 8), anchor="e", width=9,
+                font=FONTS["tiny"], anchor="e", width=9,
             ).pack(side="right", padx=(6, 0))
 
             self.option_widgets.append((row, bar_frame, None))
@@ -145,6 +147,7 @@ class PollCard(tk.Frame):
         """Kartı yeni verilerle yeniler."""
         self.poll = poll
         self.voted_index = poll.get("votes", {}).get(self.my_user_id, -1)
+        self.is_creator = poll.get("creator") == self.my_user_id
         for widget in self.winfo_children():
             widget.destroy()
         self._build()

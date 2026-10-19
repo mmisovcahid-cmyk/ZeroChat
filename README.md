@@ -16,12 +16,14 @@
 - **Zamanlı mesaj** - ⏰ ile ileriye dönük mesaj gönderme
 - **Oturum kaydı** - `sessions/` klasörüne Wireshark benzeri paket kaydı
 - **Pairing kodu** - 🔗 ile sunucusuz cihaz eşleştirme
-- **Dosya paylaşımı** - 📎 ile resim/PDF/video gönderme (parçalı + SHA256)
+- **Modern tema** - ttk (themed tkinter) ile düz, çağdaş arayüz
+- **Açık / koyu tema** - Giriş ekranından seçilir
 - **Grup yönetimi** - Admin belirler, üye çıkarır, grubu siler
 - **Gizli / herkese açık gruplar** - Davet kodu ile gizli gruplar
 - **Canlı anket** - Öğretmen anket açar, sonuçlar anında görünür
 - **Eller kaldırma** - Mesaja sağ tıkla, el kaldır
 - **Mesaj geçmişi** - Sohbetler `history.json` dosyasına kaydedilir, açılışta geri yüklenir
+- **Otomatik kayıt** - Geçmiş 5 dakikada bir otomatik kaydedilir (çökmede veri kaybı olmaz)
 - **Mesaj silme / düzenleme** - Sağ tık menüsü ile
 - **Kaydırılabilir mesaj alanı** - Çok fazla mesajda ekran bozulmaz
 - **Türkçe arayüz** - Öğrenciler için sade ve anlaşılır
@@ -60,8 +62,18 @@ Sol panelde **GRUPLAR** bölümü vardır:
 - **Tüm Ağ** - Herkese birden gönderim (her zaman mevcut)
 - **+ Oluştur** ile yeni grup, **+ Katıl** ile mevcut gruba katılım
 
-Aynı grup adını kullanan herkes aynı gruba katılır. Grup üyeliği ağ üzerinden
-bildirilir, üye sayısı listede görünür.
+Grup adını kullanan herkes aynı gruba katılır. Grup **ağa duyurulur**:
+oluşturan kişi `create` paketi gönderir, diğer cihazlar grubu otomatik
+listelerine ekler. Üyelik ve üye sayısı da ağ üzerinden bildirilir.
+
+### Gruba Katılma
+
+- **Grup adı** yazarsanız (ör. `sinif`) → herkese açık gruba katılırsınız
+- **Davet kodu** yazarsanız (6 karakter, ör. `3TKKFK`) → gizli grup için
+  yöneticiye katılma isteği gönderilir
+
+Grubu daha önce hiç duyurmamış olsanız bile katılabilirsiniz: sistem grubu
+yerel listenize ekler ve ağa katılma bildiriminizi gönderir.
 
 ### Grup Yönetimi (Admin)
 
@@ -75,7 +87,8 @@ Grubu **kuran kişi yöneticidir** (★ rozeti). Yönetici, grup adının yanın
 | Görünürlük değiştirme | ✓ | ✗ |
 | Davet kodu görme | ✓ | ✗ |
 
-Yönetici ayrılırsa ve üye kalırsa, bir sonraki üye yeni yönetici olur.
+Yönetici ayrılırsa ve üye kalırsa, bir sonraki üye yeni yönetici olur
+(`transfer_admin` paketi ile ağa bildirilir).
 
 ### Gizli / Herkese Açık Gruplar
 
@@ -88,8 +101,12 @@ Gizli grupta katılım şöyle işler:
 1. Öğrenci kodu girer → gruba katılma **isteği** yöneticinin listesine düşer
 2. Yönetici "Kabul" der → öğrenci gruba katılır
 
-Yönetici penceresinde bekleyen istekler listelenir, her biri için
-**Kabul / Reddet** butonu vardır.
+Kod yanlışsa istek reddedilir ve öğrenciye bilgi verilir.
+
+> **Dikkat:** Davet kodu yalnızca yöneticide görünür, üyelerde `••••••`
+> olarak maskelenir. Ancak ağ broadcast ile çalıştığı için kod, ağdaki
+> diğer cihazlar tarafından paket yakalama ile görülebilir. Bu bir
+> eğitim projesidir, gerçek güvenlik sağlamaz.
 
 ## Canlı Anket
 
@@ -116,15 +133,26 @@ takıldığını anında görür.
 Sol paneldeki **👻** ikonuna basın. Gizli mod açıkken cihazınız **presence
 paketi göndermez**, böylece ağ taramasında görünmezsiniz.
 
-- Karşı taraf sizinle konuşmaya başlarsa cihazınız tanınır ve listede görünür
-- Gizli cihazlar listede `👻` ikonuyla işaretlenir (eğitim için görünür)
-- `config.py`'de `STEALTH_HIDE_COMPLETELY = True` yaparsanız tamamen gizlenir
+- Karşı taraf size mesaj gönderirse cihazınız tanınır ve listede görünür
+- Gizli mod açıldığı anda bir "hidden" duyurusu **gönderilmez** (cihazı
+  elem vermek için). Bu yüzden karşı taraf sizi 12 saniye sonra "çevrimdışı"
+  olarak görür
+- `config.py` ayarları:
+  - `STEALTH_ANNOUNCE = True` → gizli moda girerken bir kez "hidden" duyurusu
+    gönderilir, karşı taraf listede `👻` ikonuyla gösterir (eğitim amaçlı,
+    ama cihazı yine de ele verir)
+  - `STEALTH_HIDE_COMPLETELY = True` → "hidden" duyurusu alan cihaz listede
+    hiç görünmez, sadece sayaçta tutulur
 
 ## Zamanlı Mesaj
 
 Yazma alanının yanındaki **⏰** ikonuna basın. Mesajı yazıp kaç dakika sonra
 gönderileceğini seçin. Kuyruk her saniye kontrol edilir, zamanı gelince
 mesaj gönderilir.
+
+Aynı pencerenin altında **zamanlanmış mesajlar** listesi görünür. Buradan
+bekleyen mesajı **İptal** edebilirsiniz. Zamanlanan mesaj da normal mesaj
+gibi geçmişe yazılır ve karşı tarafta düzenlenebilir/silinebilir.
 
 ## Oturum Kaydı (Wireshark Alternatifi)
 
@@ -137,7 +165,18 @@ Format: **JSON Lines** (her satır bir paket)
 ```
 
 `dir` alanı `OUT` (gönderilen) veya `IN` (alınan) olur. Dosyayı bir metin
-editörü veya `session_log.py` ile inceleyebilirsiniz.
+editörü veya `session_log.py` ile inceleyebilirsiniz:
+
+```python
+from session_log import list_sessions, read_session, analyze_session
+
+for f in list_sessions():
+    print(f["name"], f["size"], "byte")
+
+entries = read_session("sessions/session_20261020_004431.log")
+stats = analyze_session(entries)
+print(stats["total"], stats["in"], stats["out"], stats["types"])
+```
 
 **Wireshark'tan farkı:** Wireshark ağ seviyesinde (IP/UDP başlıkları) yakalar,
 ZeroChat uygulama seviyesinde (JSON içeriği) kaydeder. Daha okunabilir ama
@@ -155,23 +194,25 @@ Sol paneldeki **🔗** ikonuna basın:
 Kod 5 dakika geçerlidir. **Güvenlik notu:** 6 haneli kod tahmin edilebilir -
 gerçek sistemlerde daha uzun, zaman aşımlı ve tek kullanımlık kodlar kullanılır.
 
-## Dosya Paylaşımı
 
-Yazma alanının yanındaki **📎** ikonuyla dosya seçin ve gönderin.
+## Tema
 
-**Nasıl çalışır:**
-1. Dosya okunur, SHA256 hash'i hesaplanır
-2. 800 bayt parçalara bölünür, base64 ile metne çevrilir
-3. Her parça ayrı UDP paketi olarak gönderilir
-4. Alıcı parçaları birleştirir, hash'i doğrular
-5. Eksik parça varsa tekrar istenir (NACK)
-6. Dosya `downloads/` klasörüne yazılır
+Giriş ekranından **☀ Açık** veya **🌙 Koyu** seçilir. Seçiminiz
+`settings.json` dosyasına kaydedilir, bir sonraki açılışta hatırlanır.
 
-**Sınırlar:** Maks 5 MB, aynı anda 1 dosya.
+Arayüz üst çubuğundaki **"Arayüz: ... ▾"** yazısı ise hangi ağ arayüzünün
+kullanıldığını gösterir ve tıklandığında arayüz değiştirme menüsünü açar.
+
+Arayüz `ttk` (themed tkinter) kullanır. Tkinter'ın varsayılan widget'ları
+Windows 95 tarzı kabartmalı görünür; `ttk.Style().theme_use("clam")` ile
+özelleştirilerek düz ve modern bir görünüm elde edilir:
+- Butonlar düz, köşesiz, hover'da koyulaşır
+- Giriş alanlarında 3B çerçeve yerine sadece alt çizgi
+- Kaydırma çubuğu ince ve renkli
 
 ## Mesaj Silme / Düzenleme
 
-Herhangi bir mesaja **sağ tıklayın**:
+Bir mesaja **sağ tıklayın**:
 
 | Seçenek | Ne yapar |
 |---------|----------|
@@ -179,12 +220,24 @@ Herhangi bir mesaja **sağ tıklayın**:
 | **Düzenle** | Mesajı düzenleme moduna alır (buton "Kaydet" olur) |
 | **Sil** | Onay ister, mesajı siler |
 
+**Düzenle** ve **Sil** yalnızca **kendi gönderdiğiniz** mesajlarda görünür.
+Başkasının mesajını değiştiremezsiniz.
+
 Silme ve düzenleme karşı tarafa da bildirilir, ekranlar senkron kalır.
 
 ## Mesaj Geçmişi
 
-Uygulama kapanırken sohbetler `history.json` dosyasına yazılır. Uygulama
-açıldığında otomatik geri yüklenir.
+Uygulama kapanırken sohbetler `history.json` dosyasına yazılır. Ayrıca
+**her 5 dakikada bir otomatik** kaydedilir, böylece uygulama çökse bile
+mesajlar kaybolmaz.
+
+Dosya yolu **proje klasörüne göre** çözülür; uygulamayı hangi dizinden
+başlatırsanız başlatın veriler aynı yerde durur. Yazma **atomiktir** (önce
+geçici dosya, sonra taşıma) - uygulama yazma sırasında kapanırsa geçmiş
+dosyası bozulmaz.
+
+Uzun sohbetlerde dosyanın şişmemesi için her sohbette en fazla
+`MAX_HISTORY_MESSAGES` (500) mesaj saklanır.
 
 Dosya formatı (JSON):
 ```json
@@ -202,24 +255,23 @@ Dosya formatı (JSON):
 
 ```
 ZeroChat/
-├── main.py              # Giriş ekranı
+├── main.py              # Giriş ekranı (tema seçimi)
 ├── app.py               # Ana uygulama (GUI + ağ yönetimi)
-├── config.py            # Port, aralık, grup ve renk tanımları
+├── config.py            # Port, aralık, grup, renk ve tema tanımları
 ├── storage.py           # Mesaj geçmişi (JSON dosya I/O)
 ├── session_log.py       # Oturum kaydı (paket analizi)
 ├── gui/
-│   ├── sidebar.py       # Sol panel - gruplar, cihaz listesi, arama
+│   ├── theme.py         # Modern ttk teması + koyu mod
+│   ├── sidebar.py       # Sol panel - gruplar, cihazlar, sınıf panosu
 │   ├── chat_area.py     # Sağ panel - mesaj alanı (kaydırılabilir)
 │   ├── message_bubble.py # Mesaj balonu (sağ tık menüsü)
 │   ├── poll_card.py     # Anket kartı
-│   ├── file_card.py     # Dosya kartı (ilerleme çubuğu)
 │   └── pairing_dialog.py # Eşleştirme penceresi
 ├── network/
 │   ├── socket.py        # UDP socket, IP/MAC tespiti, heartbeat
 │   └── packet.py        # JSON paket oluşturma/çözümleme
 ├── history.json         # Otomatik oluşur (geçmiş dosyası)
 ├── sessions/            # Otomatik oluşur (oturum kayıtları)
-├── downloads/           # Otomatik oluşur (indirilen dosyalar)
 ├── README.md
 └── AG_ANLATIMI.md       # Ağ kavramları rehberi (öğrenciler için)
 ```
@@ -231,10 +283,13 @@ ZeroChat/
 | Ayar | Varsayılan | Açıklama |
 |------|-----------|----------|
 | `UDP_PORT` | 5000 | Dinleme portu |
+| `BUFFER_SIZE` | 65535 | Alınabilen en büyük UDP paketi (65535 = IPv4 max) |
+| `MAX_MESSAGE_CHARS` | 4000 | Tek mesajın en fazla karakter sayısı |
 | `BROADCAST_ADDRESS` | `None` | `None` = otomatik subnet broadcast. `"255.255.255.255"` = sınırlı broadcast |
 | `SEND_TO_LIMITED_BROADCAST` | `False` | Subnet broadcast'un yanında sınırlı broadcast'a da gönder |
 | `HEARTBEAT_INTERVAL` | 3 | Tarama aralığı (saniye) |
 | `OFFLINE_TIMEOUT` | 12 | Çevrimdışı sayılma süresi (saniye) |
+| `OFFLINE_CLEANUP_TIMEOUT` | 600 | Bu süre çevrimdışı kalan cihaz listeden silinir |
 | `GROUP_ALL` | `"ALL"` | Tüm ağa gönderim kimliği |
 | `GROUP_PREFIX` | `"GRP:"` | Özel grup kimliği öneki |
 | `GROUP_PUBLIC` | `"public"` | Herkese açık grup |
@@ -242,17 +297,19 @@ ZeroChat/
 | `INVITE_CODE_LENGTH` | 6 | Davet kodu uzunluğu |
 | `POLL_MIN_OPTIONS` | 2 | Ankette asgari seçenek sayısı |
 | `POLL_MAX_OPTIONS` | 6 | Ankette azami seçenek sayısı |
-| `HISTORY_FILE` | `"history.json"` | Geçmiş dosyası adı |
+| `HISTORY_FILE` | `"history.json"` | Geçmiş dosyası adı (proje klasörüne göre çözülür) |
 | `HISTORY_SAVE_ON_CLOSE` | `True` | Kapanırken geçmişi kaydet |
-| `STEALTH_HIDE_COMPLETELY` | `False` | Gizli cihazları tamamen gizle |
+| `MAX_HISTORY_MESSAGES` | 500 | Sohbet başına saklanacak azami mesaj sayısı |
+| `HISTORY_AUTOSAVE_INTERVAL` | 300 | Otomatik kayıt aralığı (saniye) |
+| `STEALTH_HIDE_COMPLETELY` | `False` | "hidden" duyurusu alan cihazı tamamen gizle |
+| `STEALTH_ANNOUNCE` | `False` | Gizli moda girerken "hidden" duyurusu gönder |
 | `SESSION_LOG_ENABLED` | `True` | Oturum kaydı açık mı |
-| `SESSION_LOG_DIR` | `"sessions"` | Oturum kayıtları klasörü |
+| `SESSION_LOG_DIR` | `"sessions"` | Oturum kayıtları klasörü (proje klasörüne göre çözülür) |
+| `MAX_SESSION_FILES` | 30 | Tutulacak azami oturum dosyası sayısı (eski dosyalar silinir) |
 | `SCHEDULE_CHECK_INTERVAL` | 1 | Zamanlı mesaj kontrol aralığı (sn) |
 | `PAIR_CODE_LENGTH` | 6 | Pairing kodu uzunluğu |
 | `PAIR_CODE_TIMEOUT` | 300 | Pairing kodu geçerlilik süresi (sn) |
-| `FILE_MAX_SIZE` | 5 MB | Maks dosya boyutu |
-| `FILE_CHUNK_SIZE` | 800 | Parça boyutu (bayt) |
-| `DOWNLOAD_DIR` | `"downloads"` | İndirilen dosyaların klasörü |
+| `THEME` | `"light"` | Aktif tema (`light` / `dark`) |
 
 ## Arayüz Seçimi (Önemli)
 
@@ -268,6 +325,11 @@ Sanal adaptörler şu yollarla tespit edilir:
 - MAC ön eki (`0A-00-27` = VirtualBox, `00-15-5D` = Hyper-V)
 - IP aralığı (`192.168.56.x` = VirtualBox varsayılan ağı)
 
+Üst çubuktaki **"Arayüz: ... ▾"** yazısına tıklayarak arayüzü **elle
+değiştirebilirsiniz**. Seçiminiz `settings.json` dosyasına kaydedilir ve
+bir sonraki açılışta hatırlanır. (Cihaz kimliğiniz olan MAC değişmez, sadece
+gönderim yapılan IP ve yayın adresi değişir.)
+
 Broadcast paketleri **subnet broadcast adresine** gönderilir
 (ör. `192.168.100.255`), böylece doğru arayüzden çıkar.
 
@@ -278,8 +340,9 @@ Broadcast paketleri **subnet broadcast adresine** gönderilir
 | Sorun | Çözüm |
 |-------|-------|
 | Cihazlar görünmüyor | Firewall'da Python'a izin verin (Özel ağlar için) |
-| Yanlış IP görünüyor | Üst çubuktaki `Yayın:` adresine bakın, `192.168.x.255` olmalı |
+| Yanlış IP görünüyor | Üst çubuktaki `Arayüz:` yazısına tıklayıp doğru arayüzü seçin |
 | Broadcast engellendi | `netsh advfirewall firewall add rule name="ZeroChat" dir=in action=allow protocol=UDP localport=5000` |
-| "Address already in use" | Başka bir ZeroChat örneği çalışıyor, kapatın |
-| Farklı subnet | `ipconfig` ile IP'leri karşılaştırın, aynı `192.168.x.x` olmalı |
+| "Ağ Hatası" penceresi çıkıyor | Port 5000 başka bir ZeroChat örneği tarafından kullanılıyor, diğerini kapatın |
 | Mesajlar ulaşmıyor | Ağ yöneticisinde "AP Isolation" kapalı mı kontrol edin |
+| Uzun mesaj gönderilemiyor | En fazla `MAX_MESSAGE_CHARS` (4000) karakter. Daha uzunu gönderilmez |
+| Kaydırma çalışmıyor (Linux) | Pencereye tıklayıp tekrar deneyin (odak kaydırma tuşunu yakalar) |

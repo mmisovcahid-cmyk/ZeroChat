@@ -265,6 +265,26 @@ tartışmak mükemmel bir ders.
 
 ---
 
+## 11.1 Arayüz Seçimi (Elle Değiştirme)
+
+Bilgisayarda birden fazla arayüz varsa (Wi-Fi + Ethernet) otomatik seçim
+yanlış olabilir. Bu yüzden üst çubuktaki "Arayüz: ... ▾" yazısına tıklanır
+ve listeden seçim yapılır:
+
+```python
+def _apply_interface(self, iface):
+    self.network.set_interface(iface)   # IP + yayın adresi değişir
+    settings = config.load_settings()
+    settings["interface"] = iface.get("name", "")
+    config.save_settings(settings)
+```
+
+**Önemli:** Arayüz değişince **cihaz kimliği (MAC) değişmez**. Sadece
+gönderim yapılan IP ve yayın adresi değişir. Böylece sohbet geçmişi ve
+arkadaş listesi bozulmaz.
+
+---
+
 ## 12. Grup Sohbeti (Çok Hedefli Routing)
 
 ### Problem
@@ -299,14 +319,69 @@ def _is_message_for_me(self, target_id):
 
 ### Grup Üyeliği
 
+Grup önce **ağa duyurulur** (`create`), sonra üyeler bildirilir (`join`):
+
 ```json
+{"type": "group_action", "action": "create", "group": "GRP:sinif",
+ "name": "Sinif", "user_id": "AA:11:22:33:44:55", "visibility": "public"}
+
 {"type": "group_action", "action": "join", "group": "GRP:sinif",
- "user_id": "AA:11:22:33:44:55", "user_name": "Ahmet"}
+ "user_id": "BB:66:77:88:99:AA", "user_name": "Veli"}
 ```
 
 **Öğrenci sorusu:** "Neden ayrı bir grup listesi var, presence paketiyle olsa?"
 Çünkü grup üyeliği kalıcı bir bilgi (kim hangi grupta), presence ise geçici
 (şu an online mı). Farklı yaşam süreleri için farklı paketler.
+
+**Öğrenci sorusu:** "Neden `create` paketi gerekiyor, `join` yeterli değil mi?"
+`join` paketi sadece "ben gruba katıldım" der; **grubun adını, yöneticisini ve
+gizli mi herkese açık mı olduğunu** taşımaz. `create` paketi bu bilgiyi
+taşıdığı için alıcı taraf grup kaydını kendisi oluşturabilir. Aksi halde
+"Gruba Katıl" butonu hiçbir işe yaramazdı.
+
+### Grup Duyurusu ve Yetki (Güvenlik)
+
+Grup, ağa `create` paketiyle duyurulur. **Ağ güvenilmezdir**: herkes herkese
+istediği paketi gönderebilir. Bu yüzden duyuru bir yetki kontrolünden geçer:
+
+```python
+existing = self.groups.get(group_id)
+local_admin = existing.get("admin_id", "") if existing else ""
+
+# Yerel kayıtta bir yönetici varsa duyuru yalnızca o yöneticinin
+# kendisinden geliyorsa kabul edilir.
+if existing and local_admin:
+    if not (announced_admin == local_admin and admin_id == local_admin):
+        return
+```
+
+**Öğrenci sorusu:** "Bunu yapmazsak ne olur?"
+Aynı adlı bir grup duyuran kötü niyetli bir cihaz:
+- yöneticinin **davet kodunu silebilir** (öğrenciler artık gruba giremez)
+- kendini **üye olarak ekleyebilir** (onay olmadan)
+- grubu **gizli -> herkese açık** yapabilir
+- grubun **adını değiştirebilir**
+
+**Öğrenci sorusu:** "Peki bir katılımcı yöneticiyi nasıl öğrenir?"
+`create` paketi `admin_id` alanını taşır. Yönetici, bir katılım bildirimi
+geldiğinde grubu yeniden duyurur; katılımcı bu duyurudan yöneticinin kim
+olduğunu öğrenir. Yalnızca **yönetici** duyuru yapabilir, böylece yanlış
+yönetici atanmaz.
+
+### Grup Protokolü (Aksiyonlar)
+
+| Aksiyon | Gönderen | Anlamı |
+|---------|----------|--------|
+| `create` | Yönetici | Grubu adı/görünürlüğüyle duyurur |
+| `join` | Üye | Gruba katıldım |
+| `leave` | Üye | Gruptan ayrıldım |
+| `invite_request` | Aday | Gizli gruba katılma isteği (kod ile) |
+| `invite_accept` | Yönetici | Davet kabul edildi |
+| `invite_reject` | Yönetici | Kod yanlış, davet reddedildi |
+| `remove_member` | Yönetici | Üyeyi çıkardı |
+| `delete_group` | Yönetici | Grup silindi |
+| `set_visibility` | Yönetici | Gizli/herkese açık değişti |
+| `transfer_admin` | Yönetici | Yönetici devri (`target_id` = yeni yönetici) |
 
 ---
 
@@ -522,6 +597,9 @@ if group["admin_id"] == self.user_id:
         group["admin_id"] = new_admin
 ```
 
+Bu değişiklik ağa `transfer_admin` paketi ile bildirilir; diğer cihazlar da
+yeni yöneticinin kim olduğunu öğrenir.
+
 ---
 
 ## 17. Gizli Gruplar ve Davet Kodu
@@ -689,6 +767,12 @@ Hayır! Bu sadece **uygulama seviyesinde** gizlilik. Ağ trafiğini izleyen biri
 Eğitim amaçlı olarak `👻` ikonuyla listede gösterir. `config.py`'de
 `STEALTH_HIDE_COMPLETELY = True` ile tamamen gizlenebilir.
 
+**Varsayılan davranış:** Gizli moda girerken "hidden" duyurusu **gönderilmez**.
+Böylece cihaz gerçekten ağda görünmez olur (karşı taraf sizi 12 saniye sonra
+"çevrimdışı" olarak görür). Eğitimde `👻` rozetini göstermek isterseniz
+`config.py`'de `STEALTH_ANNOUNCE = True` yapabilirsiniz - ama bu durumda cihaz
+bir kez olsa da kendini ele verir.
+
 ---
 
 ## 21. Zamanlı Mesaj (Scheduler)
@@ -718,6 +802,35 @@ Verimli değil ama basit. Gerçek uygulamalarda:
 **Öğrenci sorusu:** "Uygulama kapanırsa zamanlanmış mesajlar ne olur?"
 Kaybolur! Çünkü sadece bellekte tutuluyorlar. Kalıcı olması için
 `history.json` gibi diske yazılmalı ve açılışta geri yüklenmeli.
+
+---
+
+## 21.1 Büyük Paketler ve UDP Tamponu
+
+UDP'de paketin alıcıya ulaşması için **önce tam alınması** gerekir.
+Alma tamponu küçük tutulursa iki şey olur:
+
+| İşletim Sistemi | Davranış |
+|-----------------|----------|
+| Linux | Paket **kırpılır**, JSON bozulur, mesaj sessizce düşer |
+| Windows | `recvfrom` **WSAEMSGSIZE (10040)** fırlatır |
+
+Windows'ta hata `except OSError: break` ile yakalanırsa **dinleme thread'i
+ölür** ve cihaz bir daha hiçbir mesaj alamaz. Çözüm:
+
+```python
+BUFFER_SIZE = 65535        # IPv4'in en büyük UDP yükü
+
+except OSError as e:
+    if not self.running:   # soket kapandı
+        break
+    continue               # tek bir bozuk paket dinlemeyi öldürmemeli
+```
+
+**Öğrenci sorusu:** "Neden 65535?"
+IPv4'in en büyük UDP yükü tam olarak 65535 bayttır. Daha küçük bir tampon
+"normalde" yeterli görünür ama 4 KB üzerindeki tek bir mesaj bütün
+bağlantıyı sessizce bozabilir.
 
 ---
 
@@ -810,72 +923,183 @@ olur, özel anahtarla imza atar, herkes açık anahtarla doğrular.
 
 ---
 
-## 24. Dosya Paylaşımı ve Fragmentation
+
+## 24. Modern Tkinter Teması (ttk)
 
 ### Problem
 
-UDP tek bir datagram ile en fazla **65.507 bayt** taşır. 1 MB'lık bir dosya
-gönderilemez. Ayrıca ağ cihazlarının MTU'su (genelde 1500) üzerinde paket
-gönderilirse parçalanır ve yavaşlar.
+Tkinter'ın varsayılan widget'ları Windows 95 tarzıdır: 3B kabartmalı
+kenarlar, gri butonlar, geniş kaydırma çubukları. Modern bir arayüz için
+**ttk (themed tkinter)** kullanılır.
 
-### Çözüm: Parçalama (Fragmentation)
-
-```
-Dosya (5 MB)
-   ↓ 800 bayt parçalar
-Parça 0 | Parça 1 | Parça 2 | ... | Parça 6553
-   ↓ base64 (metin)
-   ↓ her biri ayrı UDP paketi
-```
-
-**Güvenli parça boyutu:** 800 bayt. Neden 800 ve değil 65.000?
-
-```
-MTU (1500) - IP başlığı (20) - UDP başlığı (8) - base64 şişmesi (+33%)
-─────────────────────────────────────────────────────────────────
-~800 bayt güvenli, 1200 bayt da olur
-```
-
-**Öğrenci sorusu:** "Base64 neden kullanıyoruz?"
-JSON sadece metin taşır. Binary veriyi doğrudan JSON'a koyamayız.
-Base64 binary'yi metne çevirir. Bedeli: **%33 boyut artışı**.
-
-**Öğrenci sorusu:** "Neden MTU'dan küçük parça?"
-Büyük paketler ağda parçalanır (IP fragmentation). Her parça ayrı bir
-başlık taşır, yeniden birleştirilir. Bu yavaş ve kayıp riski taşır.
-Küçük paketler = güvenli.
-
-### SHA256 ile Doğrulama
+### Çözüm
 
 ```python
-sha256 = hashlib.sha256(data).hexdigest()
+from tkinter import ttk
+
+style = ttk.Style(root)
+style.theme_use("clam")        # en özelleştirilebilir taban tema
+
+style.configure("Accent.TButton",
+    background=COLORS["accent"],
+    foreground="#FFFFFF",
+    borderwidth=0,             # kabartma yok
+    relief="flat",             # düz
+    focusthickness=0,
+    padding=(18, 8))
+
+style.map("Accent.TButton",
+    background=[("active", COLORS["accent_dark"])])
 ```
 
-**Alıcı tarafı:** Parçaları birleştirir, hash'i karşılaştırır. Farklıysa
-dosya bozuk demektir.
+**Öğrenci sorusu:** "ttk'nin `tk`dan farkı ne?"
+`ttk` widget'lar "stil" (style) ile çizilir - görünüm merkezi olarak
+tanımlanır. `tk` widget'lar ise her birine ayrı `bg`, `fg`, `relief`
+parametreleri verilir. Tema değiştirmek için ttk çok daha kolaydır.
 
-**Neden CRC değil SHA256?**
-CRC hızlıdır ama çakışma (collision) riski yüksektir — kötü niyetli biri
-farklı bir dosyayı aynı CRC ile üretebilir. SHA256 pratikte çakışmaz.
-Güvenlik için: HMAC-SHA256 + gizli anahtar.
+**Öğrenci sorusu:** "Neden `clam` teması?"
+Tk 8.5'te `clam` Windows'un klasik temasını düzleştirir. Diğer temalar
+(alt, vista, x11) platforma özgüdür ve özelleştirilemez.
 
-### Kayıp Paket Düzeltme (NACK)
+### Düz Giriş Alanı
 
-UDP'de paket kaybolabilir. 1310 parçadan 1'i giderse dosya bozulur.
+Varsayılan `tk.Entry` 3B çerçeve kullanır (90'lar). Modern görünüm:
 
+```python
+style.configure("Modern.TEntry",
+    fieldbackground=COLORS["input_bg"],
+    borderwidth=0,
+    lightcolor=COLORS["input_bg"],
+    darkcolor=COLORS["input_bg"],   # kenar rengi = zemin rengi
+    insertcolor=COLORS["text"],
+    padding=(10, 8))
 ```
-Alıcı: "2, 47, 913 numaralı parçalar eksik!"  → file_nack
-Gönderen: sadece o parçaları tekrar gönderir
-```
 
-**Öğrenci sorusu:** "TCP'de bu sorun olmaz mıydı?"
-Olurdu. Ama biz sunucusuz P2P + UDP kullandığımız için paket kaybı var.
-Gerçek uygulamalar TCP/QUIC kullanır. Bu proje **farkı göstermek** için
-değerli: UDP'nin hızı vs. güvenilirliği.
+`lightcolor` ve `darkcolor` alanlarını zemin rengiyle aynı yaparak
+kabartma efektini kaldırıyoruz.
 
 ---
 
-## 25. Örnek Sınav Soruları
+## 25. Koyu Tema
+
+### Tema Paletleri
+
+```python
+COLORS_LIGHT = {
+    "background": "#F0F2F5", "sidebar": "#FFFFFF",
+    "accent": "#25D366", "text": "#111B21", ...
+}
+
+COLORS_DARK = {
+    "background": "#111B21", "sidebar": "#202C33",
+    "accent": "#00A884", "text": "#E9EDEF", ...
+}
+
+COLORS = dict(COLORS_LIGHT)   # aktif palet
+```
+
+### Tema Değiştirme
+
+```python
+def set_theme(name):
+    if name == "dark":
+        config.COLORS.clear()
+        config.COLORS.update(config.COLORS_DARK)
+    else:
+        config.COLORS.clear()
+        config.COLORS.update(config.COLORS_LIGHT)
+```
+
+**Önemli detay:** `clear()` + `update()` kullanıyoruz, `=` değil. Çünkü
+modüller `from config import COLORS` ile **referans** alıyor. `COLORS = {...}`
+yeni bir sözlük oluştururdu ve eski referanslar eski palette kalırdı.
+
+**Öğrenci sorusu:** "Neden `clear/update` kullanıyoruz?"
+Python'da sözlükler değişkenlerle referans alınır. `COLORS = yeni` yapmak
+o sözlüğe işaret eden tüm referansları eskisinde bırakır. `clear()` +
+`update()` **aynı nesneyi** değiştirir - tüm referanslar güncellenir.
+
+### Ne Zaman Değiştirilir?
+
+Tema **açılış ekranında** seçilir. Çünkü çalışma zamanında değiştirmek
+için tüm widget'ların yeniden oluşturulması gerekir (Tkinter'da renkler
+çalışma zamanında değiştirilebilir ama kalıcı değildir).
+
+**Öğrenci sorusu:** "Çalışma zamanında neden değiştiremiyoruz?"
+Değiştirebiliriz ama her widget'ın `bg`/`fg` değerini elle güncellemek
+gerekir. Alternatif: uygulamayı yeniden başlatmak.
+
+---
+
+
+## 26. Tkinter Canvas ve Kaydırma (Scrollable Frame)
+
+### Problem
+
+Canvas içine yerleştirilen bir Frame, içerik büyüdükçe Canvas'ın dışına
+taşar. Kaydırma çubuğu eklemek için "scrollregion" ayarlanmalıdır.
+
+### Üç Kural (ve Bunları Öğrenmenin Bedeli)
+
+**Kural 1: Frame'in yüksekliği elle atanır (propagate kapalı)**
+
+```python
+self.msg_container = tk.Frame(self.canvas, height=0)
+self.msg_container.pack_propagate(False)
+```
+
+**Neden?** Canvas item'ına yükseklik verilirse widget zorlanır, propagate
+kapanır ve doğal yükseklik **donup kalır**. Mesajlar üst üste binmeye başlar.
+
+**Kural 2: Yükseklik çocuklardan elle hesaplanır**
+
+```python
+def _content_height(self):
+    children = self.msg_container.winfo_children()
+    if not children:
+        return 0
+    last = children[-1]
+    return last.winfo_y() + last.winfo_height() + 2
+```
+
+Son çocuğun gerçek alt kenarı tüm pad değerlerini hesaba katar.
+
+**Kural 3: Sonsuz döngüye karşı koruma bayrağı**
+
+```python
+if self._updating:
+    return
+self._updating = True
+try:
+    ...
+finally:
+    self._updating = False
+```
+
+Item'ın yüksekliği değişince `<Configure>` olayı tetiklenir, o da
+`_update_scrollregion` çağırır, o da yüksekliği değiştirir... **sonsuz
+döngü!** Bayrak bunu keser.
+
+### Bir Başka Tuzak: Scrollregion Ortalama
+
+Scrollregion canvas'tan küçükse Tk onu canvas'ın **ortasına** yerleştirir.
+"En alta kaydır" çalışması görünümü boşluğa taşır ve mesajlar kaybolur.
+
+**Çözüm:** Item yüksekliğini en az canvas yüksekliğinde tut.
+
+```python
+canvas_height = self.canvas.winfo_height()
+if canvas_height > 1 and height < canvas_height:
+    height = canvas_height
+```
+
+**Öğrenci sorusu:** "Tk neden böyle yapıyor?"
+Canvas, içerik küçükse onu ortalamakla küçük resimleri bir "portre"
+gibi gösterir. Ama scrollable bir sohbet için istemiyoruz.
+
+---
+
+## 27. Örnek Sınav Soruları
 
 1. ZeroChat neden TCP yerine UDP kullanıyor?
 2. Aynı ismi seçen iki cihaz arasında mesajlar nasıl ayırt ediliyor?
@@ -906,14 +1130,14 @@ değerli: UDP'nin hızı vs. güvenilirliği.
 20. El kaldırma neden mesaja bağlı, sohbete değil?
 21. 6 haneli davet kodu kaç farklı kombinasyon üretir? Hesaplayınız.
 22. Gizli modda presence paketi gönderiliyor mu? Neden?
-23. UDP'de 1 MB dosya kaç parçaya bölünür? (MTU 1200, base64)
-24. Base64 neden kullanılıyor? Boyut maliyeti nedir?
-25. SHA256 doğrulaması ne zaman kullanılır?
 26. Pairing kodu 6 haneli ise brute-force saldırısı ne kadar sürer?
 27. Zamanlı mesaj kuyruğu uygulama kapanınca ne olur?
 28. Oturum kaydı ile Wireshark arasındaki fark nedir?
 29. `flush()` neden çağrılıyor? Çağırmasak ne olur?
 30. Gizli mod gerçek gizlilik sağlar mı? Neden?
-31. 800 bayt parça boyutu nasıl hesaplanır? (MTU - IP - UDP - base64)
-32. Neden CRC değil de SHA256 kullanılıyor?
-33. Dosya gönderiminde NACK ne işe yarar?
+34. `ttk` ile `tk` arasındaki fark nedir? Tema değiştirmeyi kolaylaştıran nedir?
+35. Neden `ttk.Style().theme_use("clam")` kullanıyoruz?
+36. `COLORS = yeni_sözlük` yerine `COLORS.clear(); COLORS.update(...)` yazıyoruz. Neden?
+40. Canvas'ta scrollable frame yaparken `pack_propagate(False)` neden şart?
+41. Scrollregion canvas'tan küçükse ne olur ve nasıl önlenir?
+42. `<Configure>` olayı neden sonsuz döngüye yol açıyor, nasıl engelleniyor?

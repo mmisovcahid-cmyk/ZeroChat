@@ -5,7 +5,10 @@ Sunucusuz cihaz eşleştirme: iki cihaz birbirini 6 haneli kodla tanır.
 """
 
 import tkinter as tk
+from tkinter import ttk
+
 from config import COLORS, PAIR_CODE_LENGTH, PAIR_CODE_TIMEOUT
+from gui.theme import FONTS
 
 
 class PairingDialog:
@@ -39,32 +42,32 @@ class PairingDialog:
 
         tk.Label(
             win, text="🔗 Cihaz Eşleştirme",
-            font=("Segoe UI", 15, "bold"), bg=COLORS["sidebar"],
+            font=FONTS["title"], bg=COLORS["sidebar"],
             fg=COLORS["text"],
         ).pack(pady=(18, 4))
 
         tk.Label(
             win, text="Sunucu olmadan cihaz eşleştirme",
-            font=("Segoe UI", 9), bg=COLORS["sidebar"],
+            font=FONTS["small"], bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
         ).pack(pady=(0, 14))
 
         # --- Bölüm 1: Kendi kodunu göster ---
         tk.Label(
             win, text="1) KODUNU GÖSTER",
-            font=("Segoe UI", 9, "bold"), bg=COLORS["sidebar"],
+            font=FONTS["tiny_bold"], bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
         ).pack(anchor="w", padx=20)
 
         tk.Label(
             win, text="Karşı taraf bu kodu girerek sana bağlanabilir.",
-            font=("Segoe UI", 8), bg=COLORS["sidebar"],
+            font=FONTS["tiny"], bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
         ).pack(anchor="w", padx=20, pady=(2, 6))
 
         self.code_label = tk.Label(
             win, text=current_code or "------",
-            font=("Consolas", 26, "bold"), bg=COLORS["background"],
+            font=("Consolas", 26, "bold"), bg=COLORS["input_bg"],
             fg=COLORS["accent"], padx=25, pady=8,
         )
         self.code_label.pack(pady=(0, 6))
@@ -72,53 +75,48 @@ class PairingDialog:
         btn_row = tk.Frame(win, bg=COLORS["sidebar"])
         btn_row.pack(pady=(0, 12))
 
-        tk.Button(
-            btn_row, text="Yeni Kod", bg=COLORS["background"], fg=COLORS["text"],
-            relief="flat", font=("Segoe UI", 9), padx=12,
+        ttk.Button(
+            btn_row, text="Yeni Kod", style="Ghost.TButton",
             command=self._generate,
         ).pack(side="left", padx=3)
 
-        tk.Button(
-            btn_row, text="Kopyala", bg=COLORS["background"], fg=COLORS["text"],
-            relief="flat", font=("Segoe UI", 9), padx=12,
+        ttk.Button(
+            btn_row, text="Kopyala", style="Ghost.TButton",
             command=self._copy,
         ).pack(side="left", padx=3)
 
         tk.Label(
             win, text=f"Kod {PAIR_CODE_TIMEOUT // 60} dakika geçerlidir.",
-            font=("Segoe UI", 7), bg=COLORS["sidebar"],
+            font=FONTS["tiny"], bg=COLORS["sidebar"],
             fg=COLORS["offline"],
         ).pack(pady=(0, 12))
 
         # --- Bölüm 2: Kod ile bağlan ---
         tk.Label(
             win, text="2) KOD İLE BAĞLAN",
-            font=("Segoe UI", 9, "bold"), bg=COLORS["sidebar"],
+            font=FONTS["tiny_bold"], bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
         ).pack(anchor="w", padx=20)
 
         tk.Label(
             win, text="Arkadaşının kodunu gir:",
-            font=("Segoe UI", 8), bg=COLORS["sidebar"],
+            font=FONTS["tiny"], bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
         ).pack(anchor="w", padx=20, pady=(2, 4))
 
-        self.join_entry = tk.Entry(
-            win, font=("Consolas", 18, "bold"), bg=COLORS["background"],
-            relief="flat", highlightthickness=1,
-            highlightbackground=COLORS["border"], justify="center",
+        self.join_entry = ttk.Entry(
+            win, style="Modern.TEntry", font=("Consolas", 18, "bold"),
+            justify="center",
         )
         self.join_entry.pack(fill="x", padx=20, ipady=6, pady=(0, 6))
         self.join_entry.bind("<Return>", lambda e: self._join())
 
-        tk.Button(
-            win, text="Bağlan", bg=COLORS["accent"], fg="white",
-            relief="flat", font=("Segoe UI", 11, "bold"), pady=5,
-            command=self._join,
+        ttk.Button(
+            win, text="Bağlan", style="Accent.TButton", command=self._join,
         ).pack(padx=20, fill="x", pady=(0, 10))
 
         self.status_label = tk.Label(
-            win, text="", font=("Segoe UI", 9, "bold"),
+            win, text="", font=FONTS["small"],
             bg=COLORS["sidebar"], fg=COLORS["accent"],
         )
         self.status_label.pack(pady=(0, 8))
@@ -145,14 +143,14 @@ class PairingDialog:
         if not pending:
             tk.Label(
                 self.pending_frame, text="Bekleyen istek yok",
-                font=("Segoe UI", 8), bg=COLORS["sidebar"],
+                font=FONTS["tiny"], bg=COLORS["sidebar"],
                 fg=COLORS["offline"],
             ).pack(anchor="w")
             return
 
         tk.Label(
             self.pending_frame, text="BEKLEYEN İSTEKLER",
-            font=("Segoe UI", 8, "bold"), bg=COLORS["sidebar"],
+            font=FONTS["tiny_bold"], bg=COLORS["sidebar"],
             fg=COLORS["accent"],
         ).pack(anchor="w", pady=(0, 4))
 
@@ -161,21 +159,23 @@ class PairingDialog:
             row.pack(fill="x", pady=2)
 
             tk.Label(
-                row, text=user_name, font=("Segoe UI", 10),
+                row, text=user_name, font=FONTS["body"],
                 bg=COLORS["sidebar"], fg=COLORS["text"],
             ).pack(side="left")
 
-            tk.Button(
-                row, text="Kabul", bg=COLORS["accent"], fg="white",
-                relief="flat", font=("Segoe UI", 8, "bold"),
+            ttk.Button(
+                row, text="Kabul", style="Accent.TButton",
                 command=lambda uid=user_id: self._accept(uid),
             ).pack(side="right", padx=2)
 
-            tk.Button(
-                row, text="Reddet", bg=COLORS["background"],
-                fg=COLORS["text_secondary"], relief="flat", font=("Segoe UI", 8),
-                command=lambda uid=user_id: self._reject(uid),
-            ).pack(side="right", padx=2)
+            tk.Label(
+                row, text="Reddet", font=FONTS["tiny"],
+                bg=COLORS["sidebar"], fg=COLORS["text_secondary"],
+                cursor="hand2",
+            ).pack(side="right", padx=8)
+            row.winfo_children()[-1].bind(
+                "<Button-1>", lambda e, uid=user_id: self._reject(uid)
+            )
 
     def _generate(self):
         """Yeni kod üretir."""

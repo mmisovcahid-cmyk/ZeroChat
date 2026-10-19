@@ -11,7 +11,9 @@ from config import (
     WINDOW_WIDTH,
     WINDOW_HEIGHT,
     OFFLINE_TIMEOUT,
+    OFFLINE_CLEANUP_TIMEOUT,
     HISTORY_SAVE_ON_CLOSE,
+    HISTORY_AUTOSAVE_INTERVAL,
     GROUP_ALL,
     GROUP_PREFIX,
     GROUP_PUBLIC,
@@ -19,13 +21,19 @@ from config import (
     SCHEDULE_CHECK_INTERVAL,
     PAIR_CODE_LENGTH,
     PAIR_CODE_TIMEOUT,
-    DOWNLOAD_DIR,
+    STEALTH_HIDE_COMPLETELY,
 )
 from gui.sidebar import Sidebar
 from gui.chat_area import ChatArea
-from network.socket import NetworkManager
+from gui.theme import apply_theme
+from network.socket import NetworkManager, get_active_interfaces, get_interface_by_name
 from network.packet import create_message, generate_invite_code
+import config
 import storage
+
+
+class NetworkStartError(Exception):
+    """Ağ başlatılırken oluşan hatalar (port dolu, yetki yok vb.)."""
 
 
 class ZeroChatApp:
@@ -83,12 +91,7 @@ class ZeroChatApp:
         self.pair_code_created = 0
         self.pair_pending = {}       # user_id -> user_name (gelen istekler)
         self.paired_devices = set()  # eşleşmiş cihazlar
-
-        # Dosya transferleri
-        # file_id -> {"meta", "chunks", "received", "buffer"}
-        self.transfers = {}
-        # Gönderilen dosyalar (sınıf panosu)
-        self.shared_files = []       # {"file_id", "name", "size", "sender", "path"}
+        self.pair_dialog = None
 
         self.network = None
         self.sidebar = None
@@ -99,9 +102,16 @@ class ZeroChatApp:
     # =====================================================================
 
     def start(self, user_id, user_name):
-        """Uygulamayı başlatır."""
+        """Uygulamayı başlatır.
+
+        Hata durumunda (ör. port dolu) hata mesajı gösterilir ve
+        uygulama traceback ile çökmek yerine düzgün kapanır.
+        """
         self.user_id = user_id
         self.user_name = user_name
+
+        # Modern tema uygula (ttk stilleri)
+        apply_theme(self.root)
 
         # Diskten geçmişi yükle
         self.chats = storage.load_history()
@@ -110,7 +120,20 @@ class ZeroChatApp:
 
         # Ağ manager'ı başlat
         self.network = NetworkManager(user_id, user_name, self._on_packet)
-        self.network.start()
+        try:
+            self.network.start()
+        except OSError as e:
+            # Port kullanımda / yetki yok -> düzgün hata mesajı
+            self.network.stop()
+            self.root.destroy()
+            raise NetworkStartError(str(e)) from e
+
+        # Kayıtlı arayüz tercihini uygula (kullanıcı Wi-Fi/Ethernet seçtiyse)
+        saved_name = config.load_settings().get("interface", "")
+        saved_iface = get_interface_by_name(saved_name) if saved_name else None
+        if saved_iface:
+            self.network.set_interface(saved_iface)
+
         self.my_ip = self.network.ip
         self.my_mac = user_id
         self.broadcast_address = self.network.broadcast_address
@@ -120,7 +143,82 @@ class ZeroChatApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._schedule_offline_check()
         self._check_scheduled()
+        self._start_autosave()
         self.root.mainloop()
+
+    def _start_autosave(self):
+        """Periyodik otomatik geçmiş kaydı başlatır.
+
+        Uygulama çökerse veya zorla kapatılırsa mesajlar kaybolmasın.
+        """
+        if HISTORY_AUTOSAVE_INTERVAL <= 0:
+            return
+        self.root.after(int(HISTORY_AUTOSAVE_INTERVAL * 1000),
+                        self._autosave)
+
+    def _autosave(self):
+        """Geçmişi diske yazar ve bir sonraki kaydı planlar."""
+        try:
+            storage.save_history(self.chats)
+        except Exception as e:      # kayıt hatası uygulamayı düşürmemeli
+            print(f"Otomatik kayit yapilamadi: {e}")
+        self.root.after(int(HISTORY_AUTOSAVE_INTERVAL * 1000),
+                        self._autosave)
+
+    def _interface_text(self):
+        """Üst çubuktaki arayüz bilgisi metni."""
+        name = ""
+        if self.network and self.network.interface:
+            name = self.network.interface.get("name", "")
+        short = name.split(" adapter ")[-1][:18] if name else "?"
+        return f"Arayüz: {short} | Yayın: {self.broadcast_address}  ▾"
+
+    def _update_info_bar(self):
+        """Üst çubuk bilgilerini günceller."""
+        if hasattr(self, "interface_label"):
+            self.interface_label.config(text=self._interface_text())
+
+    def _on_select_interface(self, event=None):
+        """Ağ arayüzü seçim menüsü.
+
+        Bilgisayarda birden fazla arayüz varsa (Wi-Fi + Ethernet)
+        yanlış arayüz seçilmiş olabilir. Buradan değiştirilebilir.
+        """
+        menu = tk.Menu(self.root, tearoff=0)
+
+        for iface in get_active_interfaces():
+            ip = iface.get("ip") or ""
+            usable = bool(ip) and not ip.startswith("127.")
+            name = iface.get("name", "?")
+            if usable:
+                label = f"{name}  ({ip})"
+                menu.add_command(
+                    label=label,
+                    command=lambda i=iface: self._apply_interface(i),
+                )
+            else:
+                menu.add_command(
+                    label=f"{name}  (kullanılamaz)",
+                    state="disabled",
+                )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _apply_interface(self, iface):
+        """Seçilen arayüze geçer ve tercihi kaydeder."""
+        if not self.network or not self.network.set_interface(iface):
+            return
+
+        self.my_ip = self.network.ip
+        self.broadcast_address = self.network.broadcast_address
+        self._update_info_bar()
+
+        settings = config.load_settings()
+        settings["interface"] = iface.get("name", "")
+        config.save_settings(settings)
 
     def _build_gui(self):
         """GUI bileşenlerini oluşturur."""
@@ -136,13 +234,17 @@ class ZeroChatApp:
             fg="white",
         ).pack(side="left", padx=10)
 
-        tk.Label(
+        # Arayüz seçici (tıklanabilir)
+        self.interface_label = tk.Label(
             info_bar,
-            text=f"Yayın: {self.broadcast_address}",
+            text=self._interface_text(),
             font=("Segoe UI", 8),
             bg=COLORS["accent"],
             fg="white",
-        ).pack(side="left", padx=(0, 10))
+            cursor="hand2",
+        )
+        self.interface_label.pack(side="left", padx=(0, 10))
+        self.interface_label.bind("<Button-1>", self._on_select_interface)
 
         self.online_label = tk.Label(
             info_bar,
@@ -172,7 +274,6 @@ class ZeroChatApp:
             on_pair_accept=self._accept_pair,
             on_pair_reject=self._reject_pair,
             on_pair_request=self._open_pairing_dialog,
-            on_add_shared_file=self._add_shared_file,
         )
         self.sidebar.pack(side="left", fill="y")
 
@@ -189,7 +290,8 @@ class ZeroChatApp:
             on_poll_close=self._on_poll_close,
             my_user_id=self.user_id,
             on_schedule_message=self._schedule_message,
-            on_send_file=self._send_file,
+            on_list_scheduled=self._list_scheduled,
+            on_cancel_scheduled=self.cancel_scheduled,
         )
         self.chat_area.pack(side="right", fill="both", expand=True)
 
@@ -199,7 +301,11 @@ class ZeroChatApp:
 
     def _on_packet(self, pkt):
         """Ağ thread'inden gelen paket -> ana thread'e devret."""
-        self.root.after(0, self._process_packet, pkt)
+        try:
+            self.root.after(0, self._process_packet, pkt)
+        except tk.TclError:
+            # Pencere kapanmış (ağ thread'i kapanış anında paket alıyor)
+            pass
 
     def _process_packet(self, pkt):
         """Paketi ana thread'de işler."""
@@ -213,10 +319,6 @@ class ZeroChatApp:
             "poll": self._handle_poll,
             "pair_request": self._handle_pair_request,
             "pair_response": self._handle_pair_response,
-            "file_start": self._handle_file_start,
-            "file_chunk": self._handle_file_chunk,
-            "file_end": self._handle_file_end,
-            "file_nack": self._handle_file_nack,
         }
         handler = handlers.get(pkt.get("type"))
         if handler:
@@ -229,33 +331,56 @@ class ZeroChatApp:
         if target_id == GROUP_ALL:
             return True
         if target_id.startswith(GROUP_PREFIX):
-            return target_id in self.groups
+            group = self.groups.get(target_id)
+            if not group:
+                return False
+            # Gizli grupun mesajları yalnızca üyelere gösterilir
+            if group["visibility"] == GROUP_PRIVATE:
+                return (self.user_id in group["members"]
+                        or group.get("admin_id") == self.user_id)
+            return True
         return False
+
+    def _chat_id_for(self, target_id, sender_id):
+        """Mesajın hangi sohbete kaydedileceğini belirler.
+
+        Grup ve "Tüm Ağ" mesajları grup sohbetine yazılır (gönderenin
+        cihazına değil) - aksi halde grup geçmişi boş kalır ve grup
+        mesajları 1:1 sohbette görünürdü.
+        """
+        if target_id == GROUP_ALL or target_id.startswith(GROUP_PREFIX):
+            return target_id
+        return sender_id
 
     def _handle_message(self, pkt):
         """Gelen mesajı işler."""
-        sender_id = pkt["sender_id"]
-        target_id = pkt["target_id"]
+        sender_id = pkt.get("sender_id", "")
+        target_id = pkt.get("target_id", "")
+        content = pkt.get("content", "")
+        timestamp = pkt.get("timestamp", "")
 
+        if not sender_id or not target_id:
+            return
         if not self._is_message_for_me(target_id):
             return
         if sender_id == self.user_id:
             return
 
-        self.chats.setdefault(sender_id, []).append((False, pkt))
+        chat_id = self._chat_id_for(target_id, sender_id)
+        self.chats.setdefault(chat_id, []).append((False, pkt))
 
         if target_id.startswith(GROUP_PREFIX):
             if self.sidebar:
-                self.sidebar.update_group_preview(target_id, pkt["content"])
+                self.sidebar.update_group_preview(target_id, content)
         elif self.sidebar:
-            self.sidebar.update_last_message(sender_id, pkt["content"])
+            self.sidebar.update_last_message(sender_id, content)
 
-        if self.chat_area and self.chat_area.current_chat_id == sender_id:
+        if self.chat_area and self.chat_area.current_chat_id == chat_id:
             self.chat_area.add_message(
-                pkt["content"],
+                content,
                 is_outgoing=False,
-                timestamp=pkt["timestamp"],
-                sender_name=pkt["sender_name"],
+                timestamp=timestamp,
+                sender_name=pkt.get("sender_name", ""),
                 msg_id=pkt.get("msg_id", ""),
             )
 
@@ -281,6 +406,16 @@ class ZeroChatApp:
 
         hidden = (status == "hidden")
 
+        # Gizli cihaz tamamen gizlenmek isteniyorsa listeye hiç girmez
+        if hidden and STEALTH_HIDE_COMPLETELY:
+            if device_id in self.devices:
+                self.devices[device_id]["online"] = False
+                self.devices[device_id]["last_seen"] = time.time()
+                if self.sidebar:
+                    self.sidebar.set_status(device_id, False)
+                self._update_online_count()
+            return
+
         if device_id not in self.devices:
             self.devices[device_id] = {
                 "name": user_name,
@@ -295,15 +430,20 @@ class ZeroChatApp:
                                         hidden=hidden)
         else:
             device = self.devices[device_id]
+            was_offline = not device["online"]
             device["name"] = user_name
             device["ip"] = ip
             device["mac"] = mac
             device["last_seen"] = time.time()
             device["hidden"] = hidden
-            if not device["online"]:
+
+            if was_offline:
                 device["online"] = True
                 if self.sidebar:
+                    # Cihaz geri geldi: hem durum hem bilgiler tazelenir
                     self.sidebar.set_status(device_id, True)
+                    self.sidebar.update_device(device_id, name=user_name, ip=ip,
+                                               mac=mac, hidden=hidden)
             elif self.sidebar:
                 self.sidebar.update_device(device_id, name=user_name, ip=ip,
                                            mac=mac, hidden=hidden)
@@ -339,7 +479,15 @@ class ZeroChatApp:
             "send_at": send_at,
         }
         self.scheduled.append(item)
+        if self.chat_area:
+            self.chat_area.show_status(
+                f"⏰ Mesaj {delay_minutes} dakika sonra gönderilecek."
+            )
         return item
+
+    def _list_scheduled(self):
+        """Zamanlanmış mesaj listesini döndürür (iptal penceresi için)."""
+        return list(self.scheduled)
 
     def _check_scheduled(self):
         """Zamanı gelen mesajları gönderir."""
@@ -347,15 +495,33 @@ class ZeroChatApp:
         for item in list(self.scheduled):
             if item["send_at"] <= now:
                 self.scheduled.remove(item)
-                self.network.send_message(item["target_id"], item["content"])
-                if self.chat_area and self.chat_area.current_chat_id == item["target_id"]:
-                    pkt = create_message(
-                        self.user_id, self.user_name,
-                        item["target_id"], item["content"],
-                    )
+                # Gönderilen mesajın kimliği aynen kullanılmalı; aksi halde
+                # karşı tarafta silme/düzenleme eşleşmez.
+                msg_id = self.network.send_message(
+                    item["target_id"], item["content"]
+                )
+                pkt = create_message(
+                    self.user_id, self.user_name,
+                    item["target_id"], item["content"], msg_id=msg_id,
+                )
+                self.chats.setdefault(item["target_id"], []).append((True, pkt))
+
+                if self.chat_area and \
+                        self.chat_area.current_chat_id == item["target_id"]:
                     self.chat_area.add_message(
                         item["content"], is_outgoing=True,
-                        timestamp=pkt["timestamp"], msg_id=pkt["msg_id"],
+                        timestamp=pkt["timestamp"], msg_id=msg_id,
+                    )
+                    self.chat_area.show_status("⏰ Zamanlanmış mesaj gönderildi.")
+
+                if item["target_id"].startswith(GROUP_PREFIX):
+                    if self.sidebar:
+                        self.sidebar.update_group_preview(
+                            item["target_id"], item["content"]
+                        )
+                elif self.sidebar:
+                    self.sidebar.update_last_message(
+                        item["target_id"], item["content"]
                     )
         self.root.after(int(SCHEDULE_CHECK_INTERVAL * 1000),
                         self._check_scheduled)
@@ -363,6 +529,8 @@ class ZeroChatApp:
     def cancel_scheduled(self, item_id):
         """Zamanlanmış mesajı iptal eder."""
         self.scheduled = [i for i in self.scheduled if i["id"] != item_id]
+        if self.chat_area:
+            self.chat_area.show_status("Zamanlanmış mesaj iptal edildi.")
 
     # =====================================================================
     # Pairing (Sunurusuz Eşleştirme)
@@ -394,6 +562,8 @@ class ZeroChatApp:
         self.pair_pending[user_id] = user_name
         if self.sidebar:
             self.sidebar.show_pair_request(user_id, user_name)
+        if self.pair_dialog:
+            self.pair_dialog.refresh_pending(self.pair_pending)
 
     def _handle_pair_response(self, pkt):
         """Eşleştirme isteğine cevap geldi."""
@@ -403,6 +573,10 @@ class ZeroChatApp:
         target_id = pkt.get("target_id", "")
 
         if not user_id or user_id == self.user_id:
+            return
+
+        # Cevap bize mi adresli? (target_id = eşleşme isteyen kişi)
+        if target_id and target_id != self.user_id:
             return
 
         if accept:
@@ -424,6 +598,8 @@ class ZeroChatApp:
         if self.sidebar:
             self.sidebar.remove_pair_request(user_id)
             self.sidebar.show_pair_result(user_name, True)
+        if self.pair_dialog:
+            self.pair_dialog.refresh_pending(self.pair_pending)
 
     def _reject_pair(self, user_id):
         """Eşleştirme isteğini reddeder."""
@@ -431,6 +607,8 @@ class ZeroChatApp:
         self.network.send_pair_response(False, user_id)
         if self.sidebar:
             self.sidebar.remove_pair_request(user_id)
+        if self.pair_dialog:
+            self.pair_dialog.refresh_pending(self.pair_pending)
 
     def _reveal_device(self, device_id, user_name):
         """Cihazı listeye ekler (gizli olsa bile)."""
@@ -456,183 +634,6 @@ class ZeroChatApp:
     # =====================================================================
     # Dosya Paylaşımı
     # =====================================================================
-
-    def _handle_file_start(self, pkt):
-        """Dosya gönderimi başladı."""
-        file_id = pkt.get("file_id", "")
-        target_id = pkt.get("target_id", "")
-        if not file_id or not self._is_message_for_me(target_id):
-            return
-
-        self.transfers[file_id] = {
-            "meta": {
-                "name": pkt.get("file_name", "dosya"),
-                "size": pkt.get("file_size", 0),
-                "mime": pkt.get("mime", ""),
-                "total": pkt.get("total_chunks", 0),
-                "sha256": pkt.get("sha256", ""),
-                "sender": pkt.get("user_id", ""),
-            },
-            "chunks": {},
-            "received": 0,
-        }
-
-        if self.chat_area:
-            self.chat_area.show_file_card(file_id, self.transfers[file_id]["meta"],
-                                          received=0, total=pkt.get("total_chunks", 0))
-
-    def _handle_file_chunk(self, pkt):
-        """Dosya parçası geldi."""
-        file_id = pkt.get("file_id", "")
-        index = pkt.get("index", -1)
-        total = pkt.get("total", 0)
-
-        transfer = self.transfers.get(file_id)
-        if not transfer or index < 0:
-            return
-
-        if index not in transfer["chunks"]:
-            transfer["chunks"][index] = pkt.get("data", "")
-            transfer["received"] += 1
-
-        if self.chat_area:
-            self.chat_area.update_file_card(file_id, transfer["received"], total)
-
-    def _handle_file_end(self, pkt):
-        """Dosya gönderimi bitti - birleştir ve kaydet."""
-        import base64
-        import hashlib
-        import os
-
-        file_id = pkt.get("file_id", "")
-        transfer = self.transfers.get(file_id)
-        if not transfer:
-            return
-
-        meta = transfer["meta"]
-        total = meta["total"]
-
-        # Eksik parça var mı?
-        missing = [i for i in range(total) if i not in transfer["chunks"]]
-        if missing:
-            # Eksik parçaları tekrar iste
-            self.network.send_file_nack(file_id, missing[:200], meta["sender"])
-            return
-
-        # Parçaları birleştir
-        buffer = bytearray()
-        for i in range(total):
-            try:
-                buffer.extend(base64.b64decode(transfer["chunks"][i]))
-            except (ValueError, TypeError):
-                pass
-
-        # SHA256 doğrulama
-        sha256 = hashlib.sha256(bytes(buffer)).hexdigest()
-        expected = pkt.get("sha256") or meta.get("sha256", "")
-        if expected and sha256 != expected:
-            if self.chat_area:
-                self.chat_area.mark_file_failed(file_id, "Bozuk dosya (hash uyuşmadı)")
-            return
-
-        # Diske yaz
-        try:
-            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-            safe_name = os.path.basename(meta["name"]) or "dosya"
-            path = os.path.join(DOWNLOAD_DIR, safe_name)
-            with open(path, "wb") as f:
-                f.write(bytes(buffer))
-        except OSError as e:
-            if self.chat_area:
-                self.chat_area.mark_file_failed(file_id, f"Yazma hatası: {e}")
-            return
-
-        del self.transfers[file_id]
-
-        if self.chat_area:
-            self.chat_area.mark_file_done(file_id, path, meta["name"], meta["size"])
-
-        # Sınıf panosuna ekle
-        self.shared_files.append({
-            "file_id": file_id,
-            "name": meta["name"],
-            "size": meta["size"],
-            "sender": meta["sender"],
-            "path": path,
-        })
-        if self.sidebar:
-            self.sidebar.add_shared_file(self.shared_files[-1])
-
-    def _handle_file_nack(self, pkt):
-        """Eksik parça isteği geldi (alıcıda eksik vardı)."""
-        # Gönderen tarafta tekrar gönderme yapılır
-        pass
-
-    def _send_file(self, target_id, filepath):
-        """Dosyayı seçilen hedefe gönderir."""
-        from tkinter import messagebox
-
-        import os
-
-        name = os.path.basename(filepath)
-        size = os.path.getsize(filepath)
-
-        # Kartı gönderim başlamadan önce göster (ilerleme için)
-        import uuid
-        preview_id = uuid.uuid4().hex[:8]
-        if self.chat_area:
-            self.chat_area.show_file_card(
-                preview_id,
-                {"name": name, "size": size, "mime": "", "total": 0,
-                 "sha256": "", "sender": self.user_id},
-                received=0, total=0, outgoing=True,
-            )
-
-        def on_progress(done, total):
-            """Gönderim ilerlemesini günceller."""
-            if self.chat_area:
-                self.chat_area.update_file_card(preview_id, done, total)
-
-        try:
-            file_id, sha256 = self.network.send_file(
-                target_id, filepath, progress_callback=on_progress
-            )
-        except ValueError as e:
-            messagebox.showerror("Dosya Gönderilemedi", str(e))
-            if self.chat_area:
-                self.chat_area.mark_file_failed(preview_id, str(e))
-            return None
-        except OSError as e:
-            messagebox.showerror("Dosya Gönderilemedi", str(e))
-            if self.chat_area:
-                self.chat_area.mark_file_failed(preview_id, str(e))
-            return None
-
-        if not file_id:
-            return None
-
-        # Gerçek kartı tamamlandı olarak işaretle
-        if self.chat_area:
-            self.chat_area.remove_file_card(preview_id)
-            self.chat_area.show_file_card(
-                file_id,
-                {"name": name, "size": size, "mime": "", "total": 0,
-                 "sha256": sha256, "sender": self.user_id},
-                received=0, total=0, outgoing=True,
-            )
-            self.chat_area.mark_file_done(file_id, filepath, name, size)
-
-        self.shared_files.append({
-            "file_id": file_id,
-            "name": name,
-            "size": size,
-            "sender": self.user_id,
-            "path": filepath,
-        })
-        if self.sidebar:
-            self.sidebar.add_shared_file(self.shared_files[-1])
-
-        return file_id
 
     def _open_pairing_dialog(self):
         """Eşleştirme (pairing) penceresini açar."""
@@ -661,10 +662,6 @@ class ZeroChatApp:
         if self.pair_dialog:
             self.pair_dialog.set_code(code)
         return code
-
-    def _add_shared_file(self, info):
-        """Paylaşılan dosyayı panoya ekler (sidebar zaten çağırıyor)."""
-        pass
 
     def _handle_delete_notice(self, pkt):
         """Mesaj silme bildirimini işler."""
@@ -713,18 +710,43 @@ class ZeroChatApp:
             return False
         return group.get("admin_id") == self.user_id
 
-    def _ensure_group(self, group_id, name="", admin_id="", visibility=GROUP_PUBLIC):
-        """Grup kaydını yoksa oluşturur."""
+    def _ensure_group(self, group_id, name="", admin_id="", visibility=GROUP_PUBLIC,
+                      invite_code=None):
+        """Grup kaydını yoksa oluşturur, varsa tamamlar.
+
+        invite_code=None  -> mevcut kod korunur, yoksa üretilir
+        invite_code=""    -> kod BİLİNMİYOR: mevcut kod ASLA silinmez
+        """
         if group_id not in self.groups:
             self.groups[group_id] = {
                 "name": name or group_id.replace(GROUP_PREFIX, ""),
                 "admin_id": admin_id,
                 "visibility": visibility,
                 "members": {},
-                "invite_code": generate_invite_code(),
+                "invite_code": "",
                 "pending": {},
             }
-        return self.groups[group_id]
+
+        group = self.groups[group_id]
+        if name:
+            group["name"] = name
+        if visibility:
+            group["visibility"] = visibility
+        # Admin bilgisi sadece yoksa yazılır (mevcut admin korunur)
+        if admin_id and not group.get("admin_id"):
+            group["admin_id"] = admin_id
+
+        # DAVET KODU KORUMASI
+        # Uzaktan gelen bir duyuru kodumuzu silemez. Kod "" (bilinmiyor)
+        # ise mevcut kod aynen bırakılır; yalnızca hiç kod yoksa üretilir.
+        if invite_code:
+            if not group.get("invite_code"):
+                group["invite_code"] = invite_code
+        elif invite_code is None:
+            if not group.get("invite_code"):
+                group["invite_code"] = generate_invite_code()
+
+        return group
 
     def _handle_group_action(self, pkt):
         """Grup işlem bildirimini işler."""
@@ -736,34 +758,103 @@ class ZeroChatApp:
         if not group_id or user_id == self.user_id:
             return
 
-        if action == "join":
+        # "Tüm Ağ" özel bir gruptur, paketlerle değiştirilemez
+        if group_id == GROUP_ALL:
+            return
+
+        if action == "create":
+            self._handle_group_announce(group_id, user_id, user_name, pkt)
+        elif action == "join":
             self._handle_group_join(group_id, user_id, user_name)
         elif action == "leave":
             self._handle_group_leave(group_id, user_id)
         elif action == "invite_request":
             self._handle_invite_request(group_id, user_id, user_name, pkt.get("code", ""))
         elif action == "invite_accept":
-            self._handle_invite_accept(group_id, user_id, user_name)
+            self._handle_invite_accept(group_id, user_id, user_name, pkt)
         elif action == "invite_reject":
-            self._handle_invite_reject(group_id, user_id)
+            self._handle_invite_reject(group_id, user_id, pkt.get("target_id", ""))
         elif action == "remove_member":
             self._handle_remove_member(group_id, user_id, pkt.get("target_id", ""))
         elif action == "delete_group":
             self._handle_delete_group(group_id, user_id)
         elif action == "set_visibility":
             self._handle_set_visibility(group_id, user_id, pkt.get("visibility", ""))
+        elif action == "transfer_admin":
+            self._handle_transfer_admin(group_id, user_id, pkt)
 
         self._refresh_group_list()
+
+    def _handle_group_announce(self, group_id, admin_id, admin_name, pkt):
+        """Uzak cihaz bir grup oluşturdu - grubu yerel listeye ekle.
+
+        Grubu ağa duyuran kişi yöneticidir. Böylece "+ Katıl" ile
+        katılabilmek için grubu önceden bilmek gerekmez.
+
+        GÜVENLİK: Ağdaki herhangi bir cihaz, aynı adlı bir grup
+        duyurarak mevcut grubun kodunu silemez, üye olarak eklenemez
+        veya grubu gizli/herkese açık arasında değiştiremez. Duyuru
+        yalnızca aşağıdaki durumlarda kabul edilir:
+          - grup yerel listede hiç yoksa (ilk duyuru)
+          - duyuran kişi bu kaydın yöneticisiyse (yöneticinin tekrar duyurusu)
+          - kaydın henüz yöneticisi yoksa (katılma sonrası bilgilendirme)
+        """
+        name = pkt.get("name") or group_id.replace(GROUP_PREFIX, "")
+        visibility = pkt.get("visibility") or GROUP_PUBLIC
+
+        # Duyuruda bildirilen yönetici (yoksa gönderenin kendisi)
+        announced_admin = pkt.get("admin_id") or admin_id
+
+        existing = self.groups.get(group_id)
+        local_admin = existing.get("admin_id", "") if existing else ""
+
+        # Yetkisiz duyuru: yerel kayıtta bir yönetici varsa, duyuru yalnızca
+        # o yöneticinin kendisinden geliyorsa kabul edilir.
+        if existing and local_admin:
+            if not (announced_admin == local_admin and admin_id == local_admin):
+                return
+
+        # Mevcut bir grubun görünürlüğü yalnızca yöneticinin
+        # "set_visibility" paketiyle değişebilir (duyuru ile değil).
+        group = self._ensure_group(
+            group_id,
+            name=name,
+            admin_id=announced_admin,
+            visibility=visibility if existing is None else "",
+            invite_code="",
+        )
+
+        # Gizli grupta sadece yönetici üye listesini değiştirebilir
+        if group["visibility"] == GROUP_PRIVATE:
+            if announced_admin == group.get("admin_id"):
+                group["members"][announced_admin] = admin_name
+            # Gizli grupta kendimizi üye saymayız (onay gerekir)
+            if group.get("admin_id") != self.user_id:
+                group["members"].pop(self.user_id, None)
+        else:
+            group["members"][announced_admin] = admin_name
 
     def _handle_group_join(self, group_id, user_id, user_name):
         """Biri gruba katıldı."""
         group = self.groups.get(group_id)
         if not group:
             return
-        # Gizli gruba sadece admin ekleyebilir
-        if group["visibility"] == GROUP_PRIVATE and group["admin_id"] != user_id:
+
+        # Gizli grupta sadece yönetici üye ekleyebilir
+        if group["visibility"] == GROUP_PRIVATE and \
+                group.get("admin_id") != user_id:
             return
+
         group["members"][user_id] = user_name
+
+        # Katılan kişiye grubun bilgilerini (ad, görünürlük, yönetici) bildir.
+        # Bunu yalnızca YÖNETİCİ yapar, aksi halde katılan kişi yanlış
+        # yönetici atayabilirdi.
+        if group.get("admin_id") == self.user_id:
+            self.network.send_group_action(
+                "create", group_id, name=group["name"],
+                visibility=group["visibility"], admin_id=self.user_id,
+            )
 
     def _handle_group_leave(self, group_id, user_id):
         """Biri gruptan ayrıldı."""
@@ -773,6 +864,15 @@ class ZeroChatApp:
         group["members"].pop(user_id, None)
         group["pending"].pop(user_id, None)
 
+        # Yönetici ayrıldıysa ve üye kaldıysa devri yap
+        if group.get("admin_id") == user_id and group["members"]:
+            new_admin = next(iter(group["members"]))
+            group["admin_id"] = new_admin
+            self.network.send_group_action(
+                "transfer_admin", group_id, target_id=new_admin,
+                target_name=group["members"][new_admin],
+            )
+
     def _handle_invite_request(self, group_id, user_id, user_name, code):
         """Gizli gruba katılma isteği geldi (admin'e)."""
         group = self.groups.get(group_id)
@@ -780,24 +880,52 @@ class ZeroChatApp:
             return
         if group["visibility"] != GROUP_PRIVATE:
             return
-        if code and group["invite_code"] and code.upper() != group["invite_code"]:
-            return  # Kod yanlış, istek yok sayılır
+
+        expected = group.get("invite_code", "")
+        if expected and code.upper() != expected.upper():
+            # Kod yanlış - isteği reddet ve öğrenciye bildir
+            self.network.send_group_action(
+                "invite_reject", group_id, target_id=user_id
+            )
+            return
+
         group["pending"][user_id] = user_name
 
-    def _handle_invite_accept(self, group_id, user_id, user_name):
-        """Admin daveti kabul etti."""
+    def _handle_invite_accept(self, group_id, admin_id, admin_name, pkt):
+        """Admin daveti kabul etti.
+
+        target_id bize aitse (kabul edilen kişi) kendimizi üye yapıyoruz,
+        değilse gözlemci olarak o kişiyi üye listesine ekliyoruz.
+        """
         group = self.groups.get(group_id)
         if not group:
             return
-        group["pending"].pop(user_id, None)
-        group["members"][user_id] = user_name
 
-    def _handle_invite_reject(self, group_id, user_id):
+        target_id = pkt.get("target_id", "")
+        target_name = pkt.get("target_name", "")
+
+        group["pending"].pop(target_id, None)
+
+        if target_id == self.user_id:
+            group["members"][self.user_id] = self.user_name
+            if self.chat_area:
+                self.chat_area.show_status(
+                    "Davet kabul edildi, gruba katıldınız."
+                )
+        elif target_id:
+            group["members"][target_id] = target_name or target_id
+
+    def _handle_invite_reject(self, group_id, admin_id, target_id):
         """Admin daveti reddetti."""
         group = self.groups.get(group_id)
-        if not group:
-            return
-        group["pending"].pop(user_id, None)
+        if group:
+            group["pending"].pop(target_id, None)
+
+        if target_id == self.user_id and self.chat_area:
+            self.chat_area.show_status(
+                "Davet kodu reddedildi. Kodu kontrol edip tekrar deneyin.",
+                error=True,
+            )
 
     def _handle_remove_member(self, group_id, admin_id, target_id):
         """Admin bir üyeyi çıkardı."""
@@ -823,8 +951,24 @@ class ZeroChatApp:
             return
         if visibility in (GROUP_PUBLIC, GROUP_PRIVATE):
             group["visibility"] = visibility
-            if visibility == GROUP_PRIVATE and not group["invite_code"]:
+            if visibility == GROUP_PRIVATE and not group.get("invite_code"):
                 group["invite_code"] = generate_invite_code()
+
+    def _handle_transfer_admin(self, group_id, old_admin_id, pkt):
+        """Yönetici devri (eski yönetici ayrıldı)."""
+        group = self.groups.get(group_id)
+        if not group:
+            return
+        if group.get("admin_id") != old_admin_id:
+            return
+
+        new_admin = pkt.get("target_id", "")
+        if not new_admin:
+            return
+
+        group["admin_id"] = new_admin
+        if new_admin == self.user_id and self.chat_area:
+            self.chat_area.show_status("Grup yöneticisi oldunuz.")
 
     # -- Yerel (kendi tarafımızda) eylemler -----------------------------
 
@@ -834,29 +978,63 @@ class ZeroChatApp:
             group_id, group_name, admin_id=self.user_id, visibility=visibility
         )
         group["admin_id"] = self.user_id
+        group["visibility"] = visibility
         group["members"][self.user_id] = self.user_name
 
-        # Ağa bildir
+        # Grubu ağa duyur (ad + görünürlük + yönetici bilgisi ile)
         self.network.send_group_action(
-            "join", group_id, visibility=visibility, code=group["invite_code"]
+            "create", group_id, name=group_name, visibility=visibility,
+            admin_id=self.user_id,
         )
 
         self._refresh_group_list()
         self._on_contact_select(group_id)
 
     def _on_group_join(self, group_id, code=""):
-        """Gruba katılır (public ise direkt, private ise kod ile istek)."""
-        group = self.groups.get(group_id)
-        if not group:
+        """Gruba katılır.
+
+        Public grup: doğrudan katılır.
+        Gizli grup: davet kodu ile yöneticiye istek gönderir.
+        """
+        if group_id == GROUP_ALL:
+            # "Tüm Ağ" zaten herkese açık, üye olmaya gerek yok
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Tüm Ağ",
+                "\"Tüm Ağ\" grubu herkese açıktır, katılmanıza gerek yok.",
+            )
             return
 
+        group = self.groups.get(group_id)
+
+        if group is None:
+            # Grubu henüz bilmiyoruz (duyuru gelmemiş olabilir).
+            # Kod verildiyse gizli grup kabul edip davet isteği gönderiyoruz,
+            # kod yoksa herkese açık grup olarak katılıyoruz.
+            group = self._ensure_group(
+                group_id,
+                name=group_id.replace(GROUP_PREFIX, ""),
+                admin_id="",
+                visibility=GROUP_PRIVATE if code else GROUP_PUBLIC,
+                invite_code="",
+            )
+
         if group["visibility"] == GROUP_PRIVATE:
-            # Gizli grup: kod doğrulanırsa istek gönderilir
-            if code and group["invite_code"] and code.upper() != group["invite_code"]:
+            # Kod yerelde biliyorsak doğrula (yönetici ise kendi kodu)
+            local_code = group.get("invite_code", "")
+            if local_code and code and code.upper() != local_code.upper():
                 from tkinter import messagebox
                 messagebox.showerror(
                     "Hatalı Kod",
                     "Davet kodu yanlış. Gruba katılmak için doğru kodu girin.",
+                )
+                return
+
+            if not code:
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "Davet Kodu Gerekli",
+                    "Bu grup gizli. Katılmak için davet kodunu girmeniz gerekir.",
                 )
                 return
 
@@ -895,7 +1073,8 @@ class ZeroChatApp:
                 new_admin = next(iter(group["members"]))
                 group["admin_id"] = new_admin
                 self.network.send_group_action(
-                    "join", group_id, target_id=new_admin
+                    "transfer_admin", group_id, target_id=new_admin,
+                    target_name=group["members"][new_admin],
                 )
 
         self._refresh_group_list()
@@ -909,19 +1088,19 @@ class ZeroChatApp:
             self.sidebar.open_group_manager(group_id, group, self._is_admin(group_id))
 
     def _on_invite_accept(self, group_id, user_id):
-        """Davet isteğini kabul eder."""
+        """Davet isteğini kabul eder (admin)."""
         group = self.groups.get(group_id)
         if not group:
             return
         user_name = group["pending"].pop(user_id, user_id)
         group["members"][user_id] = user_name
         self.network.send_group_action(
-            "invite_accept", group_id, target_id=user_id
+            "invite_accept", group_id, target_id=user_id, target_name=user_name
         )
         self._refresh_group_list()
 
     def _on_invite_reject(self, group_id, user_id):
-        """Davet isteğini reddeder."""
+        """Davet isteğini reddeder (admin)."""
         group = self.groups.get(group_id)
         if not group:
             return
@@ -1067,7 +1246,12 @@ class ZeroChatApp:
             poll = self.polls.get(poll_id)
             if not poll:
                 return
-            poll["votes"][pkt.get("user_id", "")] = pkt.get("option_index", -1)
+            # Geçersiz seçenek indeksi oy sayılmaz (yüzdeler bozulmasın)
+            index = pkt.get("option_index", -1)
+            options = poll.get("options", [])
+            if not isinstance(index, int) or index < 0 or index >= len(options):
+                return
+            poll["votes"][pkt.get("user_id", "")] = index
 
         elif action == "close":
             poll = self.polls.get(poll_id)
@@ -1081,19 +1265,18 @@ class ZeroChatApp:
                 self.chat_area.refresh_poll(poll_id, self.polls.get(poll_id))
 
     def _poll_shows_in_current_chat(self, target):
-        """Anketin açık sohbette gösterilip gösterilmeyeceğini kontrol eder."""
+        """Anketin açık sohbette gösterilip gösterilmeyeceğini kontrol eder.
+
+        DİKKAT: Sadece anketin HEDEFİ olan sohbet gösterir. Daha önce
+        "herhangi bir grup varsa göster" mantığı vardı ve anket yanlış
+        sohbete ekleniyordu.
+        """
         if not self.chat_area:
             return False
         current = self.chat_area.current_chat_id
-        if not current:
+        if not current or not target:
             return False
-        if target == current:
-            return True
-        if target == GROUP_ALL:
-            return True
-        if target.startswith(GROUP_PREFIX) and target in self.groups:
-            return True
-        return False
+        return target == current
 
     def _on_poll_create(self, target_id, question, options):
         """Yeni anket açar."""
@@ -1122,6 +1305,11 @@ class ZeroChatApp:
         """Ankete oy verir."""
         poll = self.polls.get(poll_id)
         if not poll or not poll["open"]:
+            return
+        # Geçersiz seçenek (yok / aralik disi) oy sayılmaz
+        options = poll.get("options", [])
+        if not isinstance(option_index, int) or \
+                option_index < 0 or option_index >= len(options):
             return
         poll["votes"][self.user_id] = option_index
         self.network.send_poll("vote", poll_id, option_index=option_index)
@@ -1156,11 +1344,17 @@ class ZeroChatApp:
     def _schedule_offline_check(self):
         """Periyodik olarak sessiz kalan cihazları çevrimdışı yapar."""
         now = time.time()
-        for device_id, device in self.devices.items():
+        for device_id, device in list(self.devices.items()):
             if device["online"] and (now - device["last_seen"]) > OFFLINE_TIMEOUT:
                 device["online"] = False
                 if self.sidebar:
                     self.sidebar.set_status(device_id, False)
+            # Uzun süredir çevrimdışı kalan cihazları listeden temizle
+            elif not device["online"] and \
+                    (now - device["last_seen"]) > OFFLINE_CLEANUP_TIMEOUT:
+                del self.devices[device_id]
+                if self.sidebar:
+                    self.sidebar.remove_device(device_id)
         self._update_online_count()
         self.root.after(2000, self._schedule_offline_check)
 
@@ -1189,10 +1383,10 @@ class ZeroChatApp:
         # Kayıtlı mesajları yükle
         for is_outgoing, pkt in self.chats.get(contact_id, []):
             self.chat_area.add_message(
-                pkt["content"],
+                pkt.get("content", ""),
                 is_outgoing=is_outgoing,
-                timestamp=pkt["timestamp"],
-                sender_name=pkt["sender_name"],
+                timestamp=pkt.get("timestamp", ""),
+                sender_name=pkt.get("sender_name", ""),
                 msg_id=pkt.get("msg_id", ""),
                 is_edited=pkt.get("edited", False),
             )
@@ -1201,6 +1395,11 @@ class ZeroChatApp:
         for poll_id, poll in self.polls.items():
             if poll.get("target") == contact_id:
                 self.chat_area.show_poll(poll_id, poll)
+
+        # El kaldıranları balonlara uygula (sohbet değişince kaybolmasın)
+        for msg_id, hands in self.hands.items():
+            if hands:
+                self.chat_area.update_hands(msg_id, hands)
 
     def _on_send_message(self, target_id, content):
         """Mesaj gönderildiğinde."""
@@ -1222,8 +1421,14 @@ class ZeroChatApp:
             self.sidebar.update_last_message(target_id, content)
 
     def _on_delete_message(self, msg_id):
-        """Mesaj silme işlemi."""
+        """Mesaj silme işlemi (sadece kendi mesajlarımız)."""
         from tkinter import messagebox
+
+        if not self._is_own_message(msg_id):
+            messagebox.showinfo(
+                "Bilgi", "Yalnızca kendi gönderdiğiniz mesajları silebilirsiniz."
+            )
+            return
 
         if not messagebox.askyesno("Mesajı Sil", "Bu mesajı silmek istiyor musun?"):
             return
@@ -1241,10 +1446,25 @@ class ZeroChatApp:
         if self.chat_area and self.chat_area.current_chat_id:
             self.network.send_delete_notice(msg_id, self.chat_area.current_chat_id)
 
+    def _is_own_message(self, msg_id):
+        """Mesajın bana ait olup olmadığını kontrol eder."""
+        for messages in self.chats.values():
+            for is_outgoing, m in messages:
+                if m.get("msg_id") == msg_id:
+                    return bool(is_outgoing)
+        return False
+
     def _on_edit_message(self, msg_id, new_content):
-        """Mesaj düzenleme işlemi."""
+        """Mesaj düzenleme işlemi (sadece kendi mesajlarımız)."""
         target_id = self.chat_area.current_chat_id
         if not target_id:
+            return
+
+        if not self._is_own_message(msg_id):
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Bilgi", "Yalnızca kendi gönderdiğiniz mesajları düzenleyebilirsiniz."
+            )
             return
 
         for messages in self.chats.values():

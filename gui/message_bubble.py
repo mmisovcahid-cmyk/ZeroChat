@@ -6,6 +6,7 @@ Sağ tık menüsü ile silme / düzenleme / kopyalama / el kaldırma.
 
 import tkinter as tk
 from config import COLORS
+from gui.theme import FONTS
 
 
 class MessageBubble(tk.Frame):
@@ -36,6 +37,8 @@ class MessageBubble(tk.Frame):
 
         # Balon çerçevesi
         bubble = tk.Frame(self, bg=bubble_bg, padx=10, pady=6)
+        self.bubble = bubble
+        self.bubble_bg = bubble_bg
         bubble.pack(
             side="right" if is_outgoing else "left",
             anchor="e" if is_outgoing else "w",
@@ -48,7 +51,7 @@ class MessageBubble(tk.Frame):
         if not is_outgoing and sender_name:
             name_label = tk.Label(
                 bubble, text=sender_name,
-                font=("Segoe UI", 8, "bold"),
+                font=FONTS["tiny_bold"],
                 bg=bubble_bg, fg=COLORS["text_secondary"],
             )
             name_label.pack(anchor="w")
@@ -56,7 +59,7 @@ class MessageBubble(tk.Frame):
         # Mesaj metni
         self.msg_label = tk.Label(
             bubble, text=self._display_text(),
-            font=("Segoe UI", 10), bg=bubble_bg, fg=COLORS["text"],
+            font=FONTS["body"], bg=bubble_bg, fg=COLORS["text"],
             wraplength=350, justify="left",
         )
         self.msg_label.pack(anchor="w")
@@ -64,9 +67,12 @@ class MessageBubble(tk.Frame):
         # Zaman damgası + düzenlendi işareti
         time_label = tk.Label(
             bubble, text=timestamp + ("  ✓" if is_edited else ""),
-            font=("Segoe UI", 7), bg=bubble_bg, fg=COLORS["text_secondary"],
+            font=FONTS["tiny"], bg=bubble_bg, fg=COLORS["text_secondary"],
         )
         time_label.pack(anchor="e")
+
+        # El kaldıran listesi (balonun içinde, mesajın altında)
+        self.hands_label = None
 
         # Sağ tık menüsü
         self._bind_menu(bubble, self.msg_label, time_label)
@@ -79,6 +85,22 @@ class MessageBubble(tk.Frame):
             return f"{self.text}  (düzenlendi)"
         return self.text
 
+    def set_hands(self, names):
+        """Mesajın altında el kaldıranları gösterir."""
+        if self.hands_label is not None:
+            self.hands_label.destroy()
+            self.hands_label = None
+
+        if not names:
+            return
+
+        self.hands_label = tk.Label(
+            self.bubble, text="✋ " + ", ".join(names),
+            font=FONTS["tiny_bold"], bg=self.bubble_bg, fg=COLORS["accent"],
+            anchor="w",
+        )
+        self.hands_label.pack(anchor="w")
+
     def _bind_menu(self, *widgets):
         """Balon parçalarına sağ tık menüsünü bağlar."""
         for widget in widgets:
@@ -89,8 +111,11 @@ class MessageBubble(tk.Frame):
         """Sağ tık menüsünü oluşturur."""
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Kopyala", command=self._copy)
-        menu.add_command(label="Düzenle", command=self._edit)
-        menu.add_command(label="Sil", command=self._delete)
+        # Düzenleme ve silme sadece KENDİ mesajlarımız için.
+        # Başkasının mesajını düzenlemek/silmek yanlış olurdu.
+        if self.is_outgoing:
+            menu.add_command(label="Düzenle", command=self._edit)
+            menu.add_command(label="Sil", command=self._delete)
         if self.on_hand_raise:
             if self.hand_raised:
                 menu.add_command(label="✋ Elini İndir", command=self._lower_hand)

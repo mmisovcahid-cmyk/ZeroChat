@@ -53,11 +53,17 @@ def create_presence(user_id, user_name, status="online", ip="", mac=""):
 # ---------------------------------------------------------------------------
 
 def create_group_action(action, group, user_id, user_name="",
-                        target_id="", visibility="", code=""):
+                        target_id="", visibility="", code="",
+                        name="", target_name="", admin_id=""):
     """Grup işlemi paketi oluşturur.
 
-    action: join, leave, invite_request, invite_accept, invite_reject,
+    action: create, join, leave, invite_request, invite_accept, invite_reject,
             remove_member, delete_group, set_visibility, transfer_admin
+
+    create       -> grubu ağa duyurur (ad, görünürlük ve admin bilgisi ile)
+    join         -> gruba katılma bildirimi
+    transfer_admin -> yönetici devri (target_id yeni yönetici)
+    admin_id     -> grubun o anki yöneticisi (create duyurusunda)
     """
     return {
         "type": "group_action",
@@ -65,9 +71,12 @@ def create_group_action(action, group, user_id, user_name="",
         "group": group,
         "user_id": user_id,
         "user_name": user_name,
-        "target_id": target_id,   # işlem hedefi (üye, davet vb.)
+        "target_id": target_id,   # işlem hedefi (üye, yeni admin vb.)
+        "target_name": target_name,
         "visibility": visibility, # public / private
         "code": code,             # davet kodu
+        "name": name,             # grup adı (create duyurusu için)
+        "admin_id": admin_id,     # grubun yöneticisi (create duyurusu için)
         "timestamp": datetime.now().strftime("%H:%M"),
     }
 
@@ -76,6 +85,27 @@ def generate_invite_code(length=6):
     """Rastgele davet kodu üretir (BÜYÜK HARF + RAKAM)."""
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choice(chars) for _ in range(length))
+
+
+def create_group_announce(group, name, admin_id, admin_name, visibility):
+    """Yeni bir grubu ağa duyuran paket (grup oluşturma).
+
+    Karşı taraf bu paketi alınca grupu yerel listesine ekler ve
+    kurucuyu yönetici + üye olarak tanır.
+    """
+    return {
+        "type": "group_action",
+        "action": "create",
+        "group": group,
+        "name": name,
+        "user_id": admin_id,
+        "user_name": admin_name,
+        "target_id": "",
+        "target_name": "",
+        "visibility": visibility,
+        "code": "",
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -173,62 +203,6 @@ def create_pair_response(accept, user_id, user_name, target_id, code=""):
         "user_name": user_name,
         "target_id": target_id,
         "code": code,
-        "timestamp": datetime.now().strftime("%H:%M"),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Dosya paylaşımı
-# ---------------------------------------------------------------------------
-
-def create_file_start(file_id, file_name, file_size, mime, total_chunks,
-                      chunk_size, target_id, sha256=""):
-    """Dosya gönderiminin başlangıç paketi."""
-    return {
-        "type": "file_start",
-        "file_id": file_id,
-        "file_name": file_name,
-        "file_size": file_size,
-        "mime": mime,
-        "total_chunks": total_chunks,
-        "chunk_size": chunk_size,
-        "sha256": sha256,
-        "target_id": target_id,
-        "timestamp": datetime.now().strftime("%H:%M"),
-    }
-
-
-def create_file_chunk(file_id, index, total, data, target_id):
-    """Dosyanın bir parçası (base64 kodlanmış)."""
-    return {
-        "type": "file_chunk",
-        "file_id": file_id,
-        "index": index,
-        "total": total,
-        "data": data,
-        "target_id": target_id,
-        "timestamp": datetime.now().strftime("%H:%M"),
-    }
-
-
-def create_file_end(file_id, sha256, target_id):
-    """Dosya gönderiminin bitiş paketi."""
-    return {
-        "type": "file_end",
-        "file_id": file_id,
-        "sha256": sha256,
-        "target_id": target_id,
-        "timestamp": datetime.now().strftime("%H:%M"),
-    }
-
-
-def create_file_nack(file_id, missing_indexes, target_id):
-    """Eksik parçaların tekrar istenmesi (paket kaybı düzeltme)."""
-    return {
-        "type": "file_nack",
-        "file_id": file_id,
-        "missing": missing_indexes,
-        "target_id": target_id,
         "timestamp": datetime.now().strftime("%H:%M"),
     }
 

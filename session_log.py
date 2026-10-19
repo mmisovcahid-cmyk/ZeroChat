@@ -11,9 +11,15 @@ Format: JSON Lines (her satır bir JSON nesnesi)
 import json
 import os
 import time
+import uuid
 from datetime import datetime
 
-from config import SESSION_LOG_DIR, SESSION_LOG_ENABLED
+from config import (
+    SESSION_LOG_DIR,
+    SESSION_LOG_ENABLED,
+    MAX_SESSION_FILES,
+    resolve_path,
+)
 
 
 class SessionLogger:
@@ -33,13 +39,46 @@ class SessionLogger:
     def _open(self):
         """Yeni bir oturum dosyası açar."""
         try:
-            os.makedirs(self.directory, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.filepath = os.path.join(self.directory, f"session_{stamp}.log")
+            directory = resolve_path(self.directory)
+            os.makedirs(directory, exist_ok=True)
+            # Aynı saniyede açılan iki uygulama aynı dosyaya yazmasın:
+            # milisaniye + kısa rastgele son ek ekleniyor.
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            suffix = uuid.uuid4().hex[:4]
+            self.filepath = os.path.join(
+                directory, f"session_{stamp}_{suffix}.log"
+            )
             self.file = open(self.filepath, "a", encoding="utf-8")
+            self._cleanup_old_files(directory)
         except OSError as e:
             print(f"Oturum kaydi acilamadi: {e}")
             self.enabled = False
+
+    def _cleanup_old_files(self, directory, keep=None):
+        """Eski oturum dosyalarını siler (disk şişmesin)."""
+        if keep is None:
+            keep = MAX_SESSION_FILES
+        if keep <= 0:
+            return
+
+        try:
+            files = []
+            for name in os.listdir(directory):
+                if name.startswith("session_") and name.endswith(".log"):
+                    path = os.path.join(directory, name)
+                    try:
+                        files.append((os.stat(path).st_mtime, path))
+                    except OSError:
+                        continue
+
+            files.sort(reverse=True)
+            for _, path in files[keep:]:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        except OSError:
+            pass
 
     def log(self, direction, pkt, size=0):
         """Paketi kaydeder.
@@ -58,11 +97,12 @@ class SessionLogger:
         }
 
         # Paket içeriğini düzleştir (iç içe sözlük olmasın)
-        for key in ("user_id", "user_name", "target_id", "content", "action",
-                    "group", "visibility", "code", "msg_id", "question",
-                    "option_index", "poll_id", "file_name", "file_id",
-                    "index", "total", "sha256", "status", "ip", "mac",
-                    "sender_id", "sender_name"):
+        for key in ("user_id", "user_name", "target_id", "target_name",
+                    "content", "action", "group", "visibility", "code",
+                    "msg_id", "question", "options", "option_index", "poll_id",
+                    "file_name", "file_id", "index", "total", "sha256",
+                    "status", "ip", "mac", "name", "sender_id", "sender_name",
+                    "accept"):
             if key in pkt:
                 entry[key] = pkt[key]
 
@@ -107,6 +147,7 @@ class SessionLogger:
 
 def list_sessions(directory=SESSION_LOG_DIR):
     """Kayıtlı oturum dosyalarını listeler (yeni en önce)."""
+    directory = resolve_path(directory)
     if not os.path.isdir(directory):
         return []
 

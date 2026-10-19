@@ -24,8 +24,7 @@ from config import (
     HEARTBEAT_INTERVAL,
     BROADCAST_ADDRESS,
     SEND_TO_LIMITED_BROADCAST,
-    FILE_MAX_SIZE,
-    FILE_CHUNK_SIZE,
+    STEALTH_ANNOUNCE,
 )
 from network import packet
 from session_log import SessionLogger
@@ -255,6 +254,16 @@ def select_primary_interface(interfaces=None):
     return usable[0]
 
 
+def get_interface_by_name(name):
+    """Verilen adda sahip, kullanılabilir ağ arayüzünü bulur."""
+    if not name:
+        return None
+    for iface in get_active_interfaces():
+        if iface.get("name") == name and iface.get("ip"):
+            return iface
+    return None
+
+
 def get_local_ip():
     """Birincil arayüzün IP adresini döndürür."""
     iface = select_primary_interface()
@@ -344,16 +353,15 @@ def format_mac(node):
 
 
 def _any_mac_from_ipconfig():
-    """ipconfig çıktısından herhangi bir fiziksel adres alır."""
-    output = _run_command(["ipconfig", "/all"])
-    if output is None:
-        return None
+    """ipconfig çıktısından gerçek (sanal olmayan) bir fiziksel adres alır.
 
-    for line in output.splitlines():
-        if "Physical Address" in line or "Fiziksel Adres" in line:
-            value = _extract_value(line)
-            if value:
-                return _normalize_mac(value)
+    Daha önce ilk adres alınıyordu; ipconfig çıktısında sanal
+    adaptörler (VirtualBox, Hyper-V...) önce geldiği için kimlik
+    olarak sanal bir MAC kullanılabiliyordu.
+    """
+    for iface in get_active_interfaces():
+        if not iface.get("virtual") and iface.get("mac"):
+            return _normalize_mac(iface["mac"])
     return None
 
 
@@ -424,16 +432,39 @@ class NetworkManager:
     def set_stealth(self, enabled):
         """Gizli modu açar/kapatır.
 
-        Gizli moddayken presence paketi gönderilmez, böylece cihaz
-        ağ taramasında görünmez. Mesaj gönderildiğinde karşı taraf
-        cihazı tanır.
+        Gizli moddayken presence paketi GÖNDERİLMEZ, böylece cihaz
+        ağ taramasında görünmez. Karşı taraf cihazı ancak bize mesaj
+        gönderdiğinde tanır.
+
+        STEALTH_ANNOUNCE açıksa, gizli moda geçerken bir kez "hidden"
+        durumu duyurulur (eğitim amaçlı). Duyuru herkese gider, yani
+        cihazı yine de ele verir - bu yüzden varsayılan olarak kapalıdır.
         """
         self.stealth = enabled
         if enabled:
-            # Gizli moda geçerken çıkış bildirimi gönderme
-            self.send_presence("hidden")
+            if STEALTH_ANNOUNCE:
+                # Karşı taraf listede 👻 rozetiyle göstersin
+                self.send_presence("hidden")
         else:
             self.send_presence("online")
+
+    def set_interface(self, iface):
+        """Kullanılacak ağ arayüzünü değiştirir.
+
+        Cihaz kimliği (MAC) DEĞİŞMEZ - sadece gönderim yapılan IP ve
+        yayın adresi değişir. Böylece sohbet geçmişi bozulmaz.
+        """
+        if not iface or not iface.get("ip"):
+            return False
+
+        self.interface = iface
+        self.ip = iface["ip"]
+        self.broadcast_address = get_subnet_broadcast(
+            self.ip, iface.get("mask")
+        )
+        # Yeni arayüzde kendimizi tanıt
+        self.send_presence("online")
+        return True
 
     def send_message(self, target_id, content):
         """Belirli bir cihaza (MAC ID veya grup kimliği) mesaj gönderir."""
@@ -444,13 +475,15 @@ class NetworkManager:
         return pkt["msg_id"]
 
     def send_group_action(self, action, group, target_id="", visibility="",
-                          code=""):
+                          code="", name="", target_name="", admin_id=""):
         """Grup işlemi bildirimi gönderir."""
         pkt = packet.create_group_action(
             action, group, self.user_id, self.user_name,
             target_id=target_id, visibility=visibility, code=code,
+            name=name, target_name=target_name, admin_id=admin_id,
         )
         self._send(pkt)
+        return pkt
 
     def send_hand_raise(self, msg_id, action):
         """El kaldırma bildirimi gönderir."""
@@ -476,15 +509,14 @@ class NetworkManager:
         pkt = packet.create_edit_notice(msg_id, new_content, self.user_id, target_id)
         self._send(pkt)
 
-    def send_file_nack(self, file_id, missing_indexes, target_id):
-        """Eksik parçaların tekrar istenmesini gönderir."""
-        pkt = packet.create_file_nack(file_id, missing_indexes, target_id)
-        self._send(pkt)
-
     def send_presence(self, status):
-        """Kimlik/keşif paketi gönderir (IP ve MAC dahil)."""
+        """Kimlik/keşif paketi gönderir (IP ve MAC dahil).
+
+        MAC alanı daima user_id ile aynı değerdir (user_id = MAC adresi),
+        böylece listede görünen MAC ile cihaz kimliği hep tutarlı olur.
+        """
         pkt = packet.create_presence(
-            self.user_id, self.user_name, status, self.ip, self.mac
+            self.user_id, self.user_name, status, self.ip, self.user_id
         )
         self._send(pkt)
 
@@ -502,59 +534,6 @@ class NetworkManager:
         )
         self._send(pkt)
 
-    def send_file(self, target_id, filepath, progress_callback=None):
-        """Dosyayı parçalara bölerek gönderir.
-
-        Returns: (file_id, sha256) veya hata durumunda (None, None)
-        """
-        import base64
-        import hashlib
-        import os
-        import uuid
-
-        try:
-            with open(filepath, "rb") as f:
-                data = f.read()
-        except OSError as e:
-            print(f"Dosya okunamadi: {e}")
-            return None, None
-
-        if len(data) > FILE_MAX_SIZE:
-            raise ValueError(
-                f"Dosya cok buyuk ({len(data) / 1024 / 1024:.1f} MB). "
-                f"En fazla {FILE_MAX_SIZE / 1024 / 1024:.0f} MB."
-            )
-
-        file_id = uuid.uuid4().hex[:8]
-        file_name = os.path.basename(filepath)
-        total_chunks = max(1, (len(data) + FILE_CHUNK_SIZE - 1) // FILE_CHUNK_SIZE)
-        sha256 = hashlib.sha256(data).hexdigest()
-        mime = _guess_mime(file_name)
-
-        # Başlangıç paketi
-        start = packet.create_file_start(
-            file_id, file_name, len(data), mime, total_chunks,
-            FILE_CHUNK_SIZE, target_id, sha256,
-        )
-        self._send(start)
-
-        # Parçalar
-        for index in range(total_chunks):
-            chunk = data[index * FILE_CHUNK_SIZE:(index + 1) * FILE_CHUNK_SIZE]
-            pkt = packet.create_file_chunk(
-                file_id, index, total_chunks,
-                base64.b64encode(chunk).decode("ascii"), target_id,
-            )
-            self._send(pkt)
-            if progress_callback:
-                progress_callback(index + 1, total_chunks)
-
-        # Bitiş paketi
-        end = packet.create_file_end(file_id, sha256, target_id)
-        self._send(end)
-
-        return file_id, sha256
-
     def _send(self, pkt):
         """Paketi broadcast olarak gönderir.
 
@@ -562,6 +541,15 @@ class NetworkManager:
         sınırlı broadcast'a da gönderilir.
         """
         data = packet.encode(pkt)
+
+        # Çok büyük paketler karşı tarafta kırpılır (bazı işletim
+        # sistemlerinde hata fırlatır). Böyle bir paket gönderilmez.
+        if len(data) > BUFFER_SIZE:
+            print(
+                f"Paket çok büyük ({len(data)} byte), gönderilmedi."
+            )
+            return
+
         targets = [self.broadcast_address]
         if SEND_TO_LIMITED_BROADCAST and self.limited_broadcast != self.broadcast_address:
             targets.append(self.limited_broadcast)
@@ -589,7 +577,12 @@ class NetworkManager:
                 threading.Event().wait(0.5)
 
     def _listen(self):
-        """Sürekli dinleme döngüsü."""
+        """Sürekli dinleme döngüsü.
+
+        ÖNEMLİ: Bir hata dinlemeyi DURDURMAMALIDIR. Önceden recvfrom
+        hatasında döngüden çıkılıyordu; tek bir bozuk/çok büyük paket
+        cihazın ağdan tamamen kopmasına yol açıyordu.
+        """
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(BUFFER_SIZE)
@@ -599,12 +592,13 @@ class NetworkManager:
                     self.on_message(pkt)
             except socket.timeout:
                 continue
-            except OSError:
-                break
-
-
-def _guess_mime(filename):
-    """Dosya adından MIME türü tahmin eder."""
-    import mimetypes
-    mime, _ = mimetypes.guess_type(filename)
-    return mime or "application/octet-stream"
+            except OSError as e:
+                # Soket kapatıldıysa döngüyü bitir, aksi halde devam et.
+                if not self.running:
+                    break
+                print(f"Alma hatası (yok sayıldı): {e}")
+                continue
+            except Exception as e:
+                # Bozuk paket veya beklenmeyen hata: dinlemeyi öldürme.
+                print(f"Paket işlenemedi: {e}")
+                continue
