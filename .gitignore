@@ -9,6 +9,12 @@ env/
 # Kullanıcı verisi (kişisel sohbet geçmişi)
 history.json
 
+# Oturum kayitlari
+sessions/
+
+# Indirilen dosyalar
+downloads/
+
 # IDE
 .vscode/
 .idea/

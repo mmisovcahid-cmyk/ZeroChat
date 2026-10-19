@@ -657,7 +657,225 @@ olarak çok önemlidir.
 
 ---
 
-## 20. Örnek Sınav Soruları
+## 20. Gizli Mod ve Ağ Görünürlüğü
+
+### Problem
+
+Cihazınız presence paketleriyle "Ben buradayım" diyor. Bu paketler
+broadcast ile **herkese** gider. Yani ağdaki herkes sizin varlığınızı bilir.
+
+### Çözüm: Presence Göndermeme
+
+```python
+def _heartbeat(self):
+    while self.running:
+        if not self.stealth:        # gizli modda presence gönderme
+            self.send_presence("online")
+        ...
+```
+
+**Öğrenci sorusu:** "Gizli modda presence hiç gönderilmiyor mu?"
+Evet. Cihaz ağda yokmuş gibi davranır. Ancak biri size mesaj atarsa, o
+paket sizi tanımlar ve cihazınız listede görünür olur.
+
+**Öğrenci sorusu:** "Bu gerçek gizlilik mi?"
+Hayır! Bu sadece **uygulama seviyesinde** gizlilik. Ağ trafiğini izleyen biri
+(Wireshark) paketleri hâlâ görür. Gerçek gizlilik için:
+- Şifreleme (payload gizli)
+- VPN (adres gizli)
+- MAC randomization (donanım kimliği gizli)
+
+**Karşı taraf "hidden" status'unu görürse ne yapar?**
+Eğitim amaçlı olarak `👻` ikonuyla listede gösterir. `config.py`'de
+`STEALTH_HIDE_COMPLETELY = True` ile tamamen gizlenebilir.
+
+---
+
+## 21. Zamanlı Mesaj (Scheduler)
+
+### Basit Zamanlayıcı
+
+```python
+def _check_scheduled(self):
+    now = time.time()
+    for item in list(self.scheduled):
+        if item["send_at"] <= now:
+            self.network.send_message(item["target_id"], item["content"])
+            self.scheduled.remove(item)
+    self.root.after(1000, self._check_scheduled)
+```
+
+**Neden `list(...)` kopyası üzerinde dönüyoruz?**
+Çünkü `remove()` çağırırken listeyi değiştiriyoruz. Kopyası üzerinde dönseydik
+bir eleman atlanabilirdi.
+
+**Öğrenci sorusu:** "Her saniye kontrol etmek verimli mi?"
+Verimli değil ama basit. Gerçek uygulamalarda:
+- `threading.Timer` ile her mesaj için ayrı zamanlayıcı
+- `heapq` (öncelik kuyruğu) ile en yakın mesajı bulma
+- `asyncio` ile event loop
+
+**Öğrenci sorusu:** "Uygulama kapanırsa zamanlanmış mesajlar ne olur?"
+Kaybolur! Çünkü sadece bellekte tutuluyorlar. Kalıcı olması için
+`history.json` gibi diske yazılmalı ve açılışta geri yüklenmeli.
+
+---
+
+## 22. Oturum Kaydı ve Protokol Analizi
+
+### JSON Lines Formatı
+
+```python
+with open("session.log", "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+```
+
+**Neden JSON Lines, normal JSON değil?**
+
+| Format | Avantaj | Dezavantaj |
+|--------|---------|------------|
+| JSON Lines | Her satır bağımsız okunur, akış halinde yazılır | Tüm dosyayı parse etmek gerekir |
+| Normal JSON | Tek dosya, standart | Her yazmada tüm dosyayı yeniden yazmak gerekir |
+
+**Öğrenci sorusu:** "Neden `flush()` çağırıyoruz?"
+Çünkü `f.write()` sadece Python'un belleğine yazar. `flush()` dosyaya iter.
+Program çökerse `flush()` edilmemiş veri kaybolur.
+
+**Öğrenci sorusu:** "Her paket için dosya açıp kapatmak yavaş olmaz mı?"
+Evet, çok yavaş olur. Çözümler:
+- Dosyayı bir kez aç, program boyunca açık tut (bu proje)
+- `io.BufferedWriter` ile tamponlama
+- `logging` modülü (Python'un standart çözümü)
+
+### Wireshark vs ZeroChat
+
+| | Wireshark | ZeroChat Oturum Kaydı |
+|---|-----------|---------------------|
+| **Katman** | Ağ (L2-L7) | Uygulama (L7) |
+| **Ne görür** | IP/UDP/TCP başlıkları, hex dump | JSON mesaj içeriği |
+| **Okunabilirlik** | Düşük (uzman gerekir) | Yüksek |
+| **Kurulum** | Gerekir (Wireshark + BPF) | Gerekmez |
+| **Filtreleme** | BPF filtresi | Python sorgusu |
+
+**Öğrenci aktivitesi:** Bir ders sınıfında oturum kaydı açık bırakılır.
+Ders sonunda `session.log` analiz edilir:
+- Kim kaç mesaj attı?
+- Anketin sonucu neydi?
+- Gecikme (latency) ne kadar? (gönderme ve alma zamanları farkı)
+
+---
+
+## 23. Pairing Kodu (Sunurusuz Kimlik Doğrulama)
+
+### Problem
+
+MAC adresiyla eşleşmek zor: `A4:5E:60:D2:9F:11` yazmak gerekir ve
+karşıdaki cihazın MAC'ini bilmen gerekir.
+
+### Çözüm: Kullanıcı Kolaylığı
+
+```
+Cihaz A (kod gösterir)              Cihaz B (kod girer)
+────────────────────────            ────────────────────
+Kod: NNGL42 gösterir                 NNGL42 girer
+   │                                  ├──── pair_request ────►│
+   │◄──── pair_request ───────────────┤                      │
+   │ "Ayşe eşleşmek istiyor" onayla   │                      │
+   │──── pair_response (accept) ─────►│                      │
+   │                                  │ Eşleşti!             │
+```
+
+### Paketler
+
+```json
+{"type": "pair_request", "user_id": "BB:66:...", "user_name": "Ayşe", "code": "NNGL42"}
+{"type": "pair_response", "accept": true, "user_id": "AA:11:...", "target_id": "BB:66:..."}
+```
+
+### Güvenlik Analizi (ÖĞRENCİYE SOR)
+
+Bu proje eğitim amaçlıdır. Gerçek bir sistemde şu sorular sorulmalı:
+
+| Sorun | Açıklama | Çözüm |
+|-------|----------|-------|
+| **Kaba kuvvet** | 6 haneli = 36^6 ≈ 2 milyar, ama hızlı denenebilir | 8+ karakter, deneme sınırı |
+| **Kod tahmini** | Kod 5 dk geçerli ama izlenebilir | Tek kullanımlık, kısa ömür |
+| **Man-in-the-middle** | Kodu duyan kişi bağlanabilir | İmza doğrulama (RSA/Ed25519) |
+| **Replay** | Kod tekrar kullanılabilir | Zaman damgası + nonce |
+
+**Öğrenci sorusu:** "Bu güvenli mi?"
+Hayır. Kod sadece **kolaylık** sağlar, güvenlik değil. Gerçek kimlik
+doğrulama **asimmetrik şifreleme** ile yapılır: her cihazın bir çift anahtarı
+olur, özel anahtarla imza atar, herkes açık anahtarla doğrular.
+
+---
+
+## 24. Dosya Paylaşımı ve Fragmentation
+
+### Problem
+
+UDP tek bir datagram ile en fazla **65.507 bayt** taşır. 1 MB'lık bir dosya
+gönderilemez. Ayrıca ağ cihazlarının MTU'su (genelde 1500) üzerinde paket
+gönderilirse parçalanır ve yavaşlar.
+
+### Çözüm: Parçalama (Fragmentation)
+
+```
+Dosya (5 MB)
+   ↓ 800 bayt parçalar
+Parça 0 | Parça 1 | Parça 2 | ... | Parça 6553
+   ↓ base64 (metin)
+   ↓ her biri ayrı UDP paketi
+```
+
+**Güvenli parça boyutu:** 800 bayt. Neden 800 ve değil 65.000?
+
+```
+MTU (1500) - IP başlığı (20) - UDP başlığı (8) - base64 şişmesi (+33%)
+─────────────────────────────────────────────────────────────────
+~800 bayt güvenli, 1200 bayt da olur
+```
+
+**Öğrenci sorusu:** "Base64 neden kullanıyoruz?"
+JSON sadece metin taşır. Binary veriyi doğrudan JSON'a koyamayız.
+Base64 binary'yi metne çevirir. Bedeli: **%33 boyut artışı**.
+
+**Öğrenci sorusu:** "Neden MTU'dan küçük parça?"
+Büyük paketler ağda parçalanır (IP fragmentation). Her parça ayrı bir
+başlık taşır, yeniden birleştirilir. Bu yavaş ve kayıp riski taşır.
+Küçük paketler = güvenli.
+
+### SHA256 ile Doğrulama
+
+```python
+sha256 = hashlib.sha256(data).hexdigest()
+```
+
+**Alıcı tarafı:** Parçaları birleştirir, hash'i karşılaştırır. Farklıysa
+dosya bozuk demektir.
+
+**Neden CRC değil SHA256?**
+CRC hızlıdır ama çakışma (collision) riski yüksektir — kötü niyetli biri
+farklı bir dosyayı aynı CRC ile üretebilir. SHA256 pratikte çakışmaz.
+Güvenlik için: HMAC-SHA256 + gizli anahtar.
+
+### Kayıp Paket Düzeltme (NACK)
+
+UDP'de paket kaybolabilir. 1310 parçadan 1'i giderse dosya bozulur.
+
+```
+Alıcı: "2, 47, 913 numaralı parçalar eksik!"  → file_nack
+Gönderen: sadece o parçaları tekrar gönderir
+```
+
+**Öğrenci sorusu:** "TCP'de bu sorun olmaz mıydı?"
+Olurdu. Ama biz sunucusuz P2P + UDP kullandığımız için paket kaybı var.
+Gerçek uygulamalar TCP/QUIC kullanır. Bu proje **farkı göstermek** için
+değerli: UDP'nin hızı vs. güvenilirliği.
+
+---
+
+## 25. Örnek Sınav Soruları
 
 1. ZeroChat neden TCP yerine UDP kullanıyor?
 2. Aynı ismi seçen iki cihaz arasında mesajlar nasıl ayırt ediliyor?
@@ -687,3 +905,15 @@ olarak çok önemlidir.
 19. Yönetici gruptan ayrılırsa ne olur? Yeni yönetici nasıl belirlenir?
 20. El kaldırma neden mesaja bağlı, sohbete değil?
 21. 6 haneli davet kodu kaç farklı kombinasyon üretir? Hesaplayınız.
+22. Gizli modda presence paketi gönderiliyor mu? Neden?
+23. UDP'de 1 MB dosya kaç parçaya bölünür? (MTU 1200, base64)
+24. Base64 neden kullanılıyor? Boyut maliyeti nedir?
+25. SHA256 doğrulaması ne zaman kullanılır?
+26. Pairing kodu 6 haneli ise brute-force saldırısı ne kadar sürer?
+27. Zamanlı mesaj kuyruğu uygulama kapanınca ne olur?
+28. Oturum kaydı ile Wireshark arasındaki fark nedir?
+29. `flush()` neden çağrılıyor? Çağırmasak ne olur?
+30. Gizli mod gerçek gizlilik sağlar mı? Neden?
+31. 800 bayt parça boyutu nasıl hesaplanır? (MTU - IP - UDP - base64)
+32. Neden CRC değil de SHA256 kullanılıyor?
+33. Dosya gönderiminde NACK ne işe yarar?

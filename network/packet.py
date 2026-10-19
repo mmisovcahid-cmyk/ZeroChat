@@ -150,6 +150,90 @@ def create_poll(action, poll_id, question="", options=None, user_id="",
 
 
 # ---------------------------------------------------------------------------
+# Pairing (sunucusuz eşleştirme)
+# ---------------------------------------------------------------------------
+
+def create_pair_request(user_id, user_name, code):
+    """Eşleştirme isteği oluşturur (kodu bilen cihaz gönderir)."""
+    return {
+        "type": "pair_request",
+        "user_id": user_id,
+        "user_name": user_name,
+        "code": code,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def create_pair_response(accept, user_id, user_name, target_id, code=""):
+    """Eşleştirme isteğine kabul/ret cevabı oluşturur."""
+    return {
+        "type": "pair_response",
+        "accept": accept,
+        "user_id": user_id,
+        "user_name": user_name,
+        "target_id": target_id,
+        "code": code,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dosya paylaşımı
+# ---------------------------------------------------------------------------
+
+def create_file_start(file_id, file_name, file_size, mime, total_chunks,
+                      chunk_size, target_id, sha256=""):
+    """Dosya gönderiminin başlangıç paketi."""
+    return {
+        "type": "file_start",
+        "file_id": file_id,
+        "file_name": file_name,
+        "file_size": file_size,
+        "mime": mime,
+        "total_chunks": total_chunks,
+        "chunk_size": chunk_size,
+        "sha256": sha256,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def create_file_chunk(file_id, index, total, data, target_id):
+    """Dosyanın bir parçası (base64 kodlanmış)."""
+    return {
+        "type": "file_chunk",
+        "file_id": file_id,
+        "index": index,
+        "total": total,
+        "data": data,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def create_file_end(file_id, sha256, target_id):
+    """Dosya gönderiminin bitiş paketi."""
+    return {
+        "type": "file_end",
+        "file_id": file_id,
+        "sha256": sha256,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def create_file_nack(file_id, missing_indexes, target_id):
+    """Eksik parçaların tekrar istenmesi (paket kaybı düzeltme)."""
+    return {
+        "type": "file_nack",
+        "file_id": file_id,
+        "missing": missing_indexes,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Serileştirme
 # ---------------------------------------------------------------------------
 

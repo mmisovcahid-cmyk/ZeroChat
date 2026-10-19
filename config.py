@@ -39,6 +39,30 @@ POLL_MAX_OPTIONS = 6
 HISTORY_FILE = "history.json"
 HISTORY_SAVE_ON_CLOSE = True
 
+# Gizli Mod (Stealth)
+#   True  -> gizli cihazlar listede tamamen görünmez (sadece sayaç)
+#   False -> gizli cihazlar listede "gölge" rozetiyle görünür (eğitim için)
+STEALTH_HIDE_COMPLETELY = False
+
+# Oturum Kaydı (Wireshark alternatifi)
+SESSION_LOG_ENABLED = True
+SESSION_LOG_DIR = "sessions"
+
+# Zamanlı Mesaj
+SCHEDULE_CHECK_INTERVAL = 1      # saniye (kuyruk kontrol aralığı)
+SCHEDULE_MAX_MINUTES = 60 * 24 * 7   # en fazla 1 hafta sonrasına
+
+# Pairing Kodu (sunurusuz eşleştirme)
+PAIR_CODE_LENGTH = 6
+PAIR_CODE_TIMEOUT = 300          # kodun geçerlilik süresi (saniye)
+
+# Dosya Paylaşımı
+FILE_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+FILE_CHUNK_SIZE = 800            # base64 öncesi bayt (MTU güvenli)
+FILE_MAX_CONCURRENT = 1          # aynı anda kaç dosya
+DOWNLOAD_DIR = "downloads"       # indirilen dosyaların klasörü
+FILE_PREVIEW_MAX_SIZE = 200 * 1024   # önizleme için maks resim boyutu
+
 # Renk Teması (WhatsApp Sade)
 COLORS = {
     "background": "#F0F2F5",

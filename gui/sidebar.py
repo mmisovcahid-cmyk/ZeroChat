@@ -25,7 +25,10 @@ class Sidebar(tk.Frame):
                  on_group_create=None, on_group_join=None, on_group_leave=None,
                  on_group_manage=None, on_invite_accept=None,
                  on_invite_reject=None, on_remove_member=None,
-                 on_set_visibility=None, on_delete_group=None):
+                 on_set_visibility=None, on_delete_group=None,
+                 on_toggle_stealth=None, on_generate_pair_code=None,
+                 on_pair_accept=None, on_pair_reject=None,
+                 on_pair_request=None, on_add_shared_file=None):
         super().__init__(parent, bg=COLORS["sidebar"], width=SIDEBAR_WIDTH)
         self.on_contact_select = on_contact_select
         self.on_group_create = on_group_create
@@ -37,6 +40,12 @@ class Sidebar(tk.Frame):
         self.on_remove_member = on_remove_member
         self.on_set_visibility = on_set_visibility
         self.on_delete_group = on_delete_group
+        self.on_toggle_stealth = on_toggle_stealth
+        self.on_generate_pair_code = on_generate_pair_code
+        self.on_pair_accept = on_pair_accept
+        self.on_pair_reject = on_pair_reject
+        self.on_pair_request = on_pair_request
+        self.on_add_shared_file = on_add_shared_file
         self.contacts = contacts
 
         self.contact_frames = {}
@@ -48,6 +57,10 @@ class Sidebar(tk.Frame):
         self.manager_refs = {}
         # group_id -> grup bilgisi (davet kodu araması için)
         self.group_data = {}
+        # Pairing istek satırları
+        self.pair_request_frames = {}
+        # Paylaşılan dosya satırları
+        self.shared_file_frames = {}
 
         self._build_header()
         self._build_search()
@@ -69,6 +82,28 @@ class Sidebar(tk.Frame):
             font=("Segoe UI", 14, "bold"),
             bg=COLORS["sidebar"], fg=COLORS["text"],
         ).pack(side="left", padx=15, pady=10)
+
+        # Araç çubuğu
+        tools = tk.Frame(header, bg=COLORS["sidebar"])
+        tools.pack(side="right", padx=8)
+
+        # Gizli mod
+        self.stealth_button = tk.Label(
+            tools, text="👻", font=("Segoe UI", 13),
+            bg=COLORS["sidebar"], fg=COLORS["text_secondary"],
+            cursor="hand2",
+        )
+        self.stealth_button.pack(side="right", padx=4)
+        self.stealth_button.bind("<Button-1>", self._on_toggle_stealth)
+
+        # Pairing kodu
+        self.pair_button = tk.Label(
+            tools, text="🔗", font=("Segoe UI", 12),
+            bg=COLORS["sidebar"], fg=COLORS["text_secondary"],
+            cursor="hand2",
+        )
+        self.pair_button.pack(side="right", padx=4)
+        self.pair_button.bind("<Button-1>", self._on_pairing)
 
     def _build_search(self):
         search_frame = tk.Frame(self, bg=COLORS["sidebar"])
@@ -121,6 +156,13 @@ class Sidebar(tk.Frame):
 
         self.contact_container = tk.Frame(self, bg=COLORS["sidebar"])
         self.contact_container.pack(fill="both", expand=True)
+
+        # Durum mesajı (altta)
+        self.sidebar_status = tk.Label(
+            self, text="", font=("Segoe UI", 8, "bold"),
+            bg=COLORS["sidebar"], fg=COLORS["accent"],
+        )
+        self.sidebar_status.pack(anchor="w", padx=10, pady=(0, 2))
 
     def _build_new_chat_button(self):
         btn_frame = tk.Frame(self, bg=COLORS["sidebar"])
@@ -309,9 +351,10 @@ class Sidebar(tk.Frame):
     # Cihaz / grup listesi
     # =====================================================================
 
-    def add_device(self, device_id, name, ip, mac):
+    def add_device(self, device_id, name, ip, mac, hidden=False):
         """Keşfedilen cihazı listeye ekler."""
         if device_id in self.contact_frames:
+            self.update_device(device_id, name=name, ip=ip, mac=mac, hidden=hidden)
             return
 
         frame = tk.Frame(self.contact_container, bg=COLORS["sidebar"])
@@ -321,7 +364,8 @@ class Sidebar(tk.Frame):
         top_row.pack(fill="x", padx=10, pady=(6, 0))
 
         name_label = tk.Label(
-            top_row, text=name, font=("Segoe UI", 11, "bold"),
+            top_row, text=self._device_title(name, hidden),
+            font=("Segoe UI", 11, "bold"),
             bg=COLORS["sidebar"], fg=COLORS["text"], anchor="w",
         )
         name_label.pack(side="left")
@@ -351,6 +395,126 @@ class Sidebar(tk.Frame):
             "frame": frame, "name": name_label, "info": info_label,
             "preview": preview_label, "status": status_label,
         }
+
+    @staticmethod
+    def _device_title(name, hidden):
+        """Cihaz başlığı (gizli cihazlarda hayalet ikonu)."""
+        return f"👻 {name}" if hidden else name
+
+    def update_device(self, device_id, name=None, ip=None, mac=None, hidden=None):
+        """Cihaz bilgilerini günceller."""
+        entry = self.contact_frames.get(device_id)
+        if not entry:
+            return
+        if name is not None:
+            current_hidden = hidden
+            if current_hidden is None:
+                current_hidden = entry["name"].cget("text").startswith("👻")
+            entry["name"].config(text=self._device_title(name, current_hidden))
+        if ip is not None and mac is not None:
+            entry["info"].config(text=f"{ip}  •  {mac}")
+
+    def set_stealth_state(self, enabled):
+        """Gizli mod butonunun görünümünü günceller."""
+        if enabled:
+            self.stealth_button.config(text="👻", fg=COLORS["accent"])
+        else:
+            self.stealth_button.config(text="👻", fg=COLORS["text_secondary"])
+
+    def _on_toggle_stealth(self, event=None):
+        """Gizli modu açar/kapatır."""
+        if self.on_toggle_stealth:
+            self.on_toggle_stealth()
+
+    def _on_pairing(self, event=None):
+        """Eşleştirme penceresini açar."""
+        if self.on_pair_request:
+            self.on_pair_request()
+
+    # -- Pairing istekleri ----------------------------------------------
+
+    def show_pair_request(self, user_id, user_name):
+        """Eşleştirme isteğini listede gösterir."""
+        if user_id in self.pair_request_frames:
+            return
+
+        frame = tk.Frame(self.contact_container, bg=COLORS["background"])
+        frame.pack(fill="x", padx=5, pady=2)
+
+        tk.Label(
+            frame, text=f"🔗 {user_name} eşleşmek istiyor",
+            font=("Segoe UI", 9, "bold"), bg=COLORS["background"],
+            fg=COLORS["text"], anchor="w",
+        ).pack(side="left", padx=8, pady=4)
+
+        tk.Label(
+            frame, text="Kabul", font=("Segoe UI", 8, "bold"),
+            bg=COLORS["accent"], fg="white", cursor="hand2", padx=6, pady=2,
+        ).pack(side="right", padx=2)
+        tk.Label(
+            frame, text="Reddet", font=("Segoe UI", 8),
+            bg=COLORS["background"], fg=COLORS["text_secondary"],
+            cursor="hand2", padx=6, pady=2,
+        ).pack(side="right", padx=2)
+
+        frame.winfo_children()[-2].bind(
+            "<Button-1>", lambda e, uid=user_id: self._accept_pair(uid))
+        frame.winfo_children()[-1].bind(
+            "<Button-1>", lambda e, uid=user_id: self._reject_pair(uid))
+
+        self.pair_request_frames[user_id] = frame
+
+    def remove_pair_request(self, user_id):
+        """Eşleştirme isteğini kaldırır."""
+        frame = self.pair_request_frames.pop(user_id, None)
+        if frame:
+            frame.destroy()
+
+    def _accept_pair(self, user_id):
+        if self.on_pair_accept:
+            self.on_pair_accept(user_id)
+
+    def _reject_pair(self, user_id):
+        if self.on_pair_reject:
+            self.on_pair_reject(user_id)
+
+    def show_pair_result(self, user_name, accepted):
+        """Eşleştirme sonucunu kısa süre gösterir."""
+        if accepted:
+            text = f"✅ {user_name} ile eşleştiniz"
+        else:
+            text = f"❌ {user_name} eşleşmeyi reddetti"
+        self.sidebar_status.config(text=text, fg=COLORS["accent"])
+        self.winfo_toplevel().after(3000, lambda: self.sidebar_status.config(
+            text="", fg=COLORS["text_secondary"]))
+
+    # -- Paylaşılan dosyalar (sınıf panosu) ----------------------------
+
+    def add_shared_file(self, info):
+        """Paylaşılan dosyayı sınıf panosuna ekler."""
+        file_id = info.get("file_id", "")
+        if file_id in self.shared_file_frames:
+            return
+
+        frame = tk.Frame(self.contact_container, bg=COLORS["background"])
+        frame.pack(fill="x", padx=5, pady=2)
+
+        name = info.get("name", "dosya")
+        size = info.get("size", 0)
+        size_text = f"{size / 1024:.0f} KB" if size < 1024 * 1024 \
+            else f"{size / 1024 / 1024:.1f} MB"
+
+        tk.Label(
+            frame, text=f"📎 {name}", font=("Segoe UI", 9, "bold"),
+            bg=COLORS["background"], fg=COLORS["text"], anchor="w",
+        ).pack(side="left", padx=8, pady=3)
+
+        tk.Label(
+            frame, text=size_text, font=("Segoe UI", 8),
+            bg=COLORS["background"], fg=COLORS["text_secondary"],
+        ).pack(side="right", padx=8)
+
+        self.shared_file_frames[file_id] = frame
 
     def add_group(self, group_id, display_name, member_count=0,
                  visibility=GROUP_PUBLIC, is_admin=False, pending=0,

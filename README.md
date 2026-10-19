@@ -12,6 +12,11 @@
 - **Özel mesajlaşma** - Mesajlar sadece hedef cihaza gösterilir
 - **Çevrimiçi/çevrimdışı durumu** - Yeşil nokta (çevrimiçi) / gri nokta (çevrimdışı)
 - **Grup sohbeti** - "Tüm Ağ" veya adlandırılmış gruplar (GRP:sinif)
+- **Gizli mod** - 👻 ikonu ile cihazın ağda görünmez olması
+- **Zamanlı mesaj** - ⏰ ile ileriye dönük mesaj gönderme
+- **Oturum kaydı** - `sessions/` klasörüne Wireshark benzeri paket kaydı
+- **Pairing kodu** - 🔗 ile sunucusuz cihaz eşleştirme
+- **Dosya paylaşımı** - 📎 ile resim/PDF/video gönderme (parçalı + SHA256)
 - **Grup yönetimi** - Admin belirler, üye çıkarır, grubu siler
 - **Gizli / herkese açık gruplar** - Davet kodu ile gizli gruplar
 - **Canlı anket** - Öğretmen anket açar, sonuçlar anında görünür
@@ -106,6 +111,64 @@ listesi görünür. Tekrar sağ tıklayıp "Elini İndir" ile kaldırılabilir.
 Öğretmen sınıfa bir soru sorduğunda öğrenciler el kaldırır, öğretmen kimin
 takıldığını anında görür.
 
+## Gizli Mod (Stealth)
+
+Sol paneldeki **👻** ikonuna basın. Gizli mod açıkken cihazınız **presence
+paketi göndermez**, böylece ağ taramasında görünmezsiniz.
+
+- Karşı taraf sizinle konuşmaya başlarsa cihazınız tanınır ve listede görünür
+- Gizli cihazlar listede `👻` ikonuyla işaretlenir (eğitim için görünür)
+- `config.py`'de `STEALTH_HIDE_COMPLETELY = True` yaparsanız tamamen gizlenir
+
+## Zamanlı Mesaj
+
+Yazma alanının yanındaki **⏰** ikonuna basın. Mesajı yazıp kaç dakika sonra
+gönderileceğini seçin. Kuyruk her saniye kontrol edilir, zamanı gelince
+mesaj gönderilir.
+
+## Oturum Kaydı (Wireshark Alternatifi)
+
+Uygulama açıldığından itibaren tüm gönderilen ve alınan paketler
+`sessions/session_YYYYMMDD_HHMMSS.log` dosyasına yazılır.
+
+Format: **JSON Lines** (her satır bir paket)
+```json
+{"t": 1729372845.123, "time": "14:32:05", "dir": "OUT", "type": "message", "size": 142, "user_id": "AA:11:...", "content": "Merhaba"}
+```
+
+`dir` alanı `OUT` (gönderilen) veya `IN` (alınan) olur. Dosyayı bir metin
+editörü veya `session_log.py` ile inceleyebilirsiniz.
+
+**Wireshark'tan farkı:** Wireshark ağ seviyesinde (IP/UDP başlıkları) yakalar,
+ZeroChat uygulama seviyesinde (JSON içeriği) kaydeder. Daha okunabilir ama
+alt seviye detay yoktur.
+
+## Pairing Kodu (Sunurusuz Eşleştirme)
+
+Sol paneldeki **🔗** ikonuna basın:
+
+1. **Kodunu göster** - 6 haneli kodunuz (`NNGL42`) ekranda görünür, karşı taraf
+   girerek size bağlanabilir
+2. **Kod ile bağlan** - arkadaşınızın kodunu girin, bağlanma isteği gider
+3. Karşı taraf "Kabul" derse eşleşme tamamlanır
+
+Kod 5 dakika geçerlidir. **Güvenlik notu:** 6 haneli kod tahmin edilebilir -
+gerçek sistemlerde daha uzun, zaman aşımlı ve tek kullanımlık kodlar kullanılır.
+
+## Dosya Paylaşımı
+
+Yazma alanının yanındaki **📎** ikonuyla dosya seçin ve gönderin.
+
+**Nasıl çalışır:**
+1. Dosya okunur, SHA256 hash'i hesaplanır
+2. 800 bayt parçalara bölünür, base64 ile metne çevrilir
+3. Her parça ayrı UDP paketi olarak gönderilir
+4. Alıcı parçaları birleştirir, hash'i doğrular
+5. Eksik parça varsa tekrar istenir (NACK)
+6. Dosya `downloads/` klasörüne yazılır
+
+**Sınırlar:** Maks 5 MB, aynı anda 1 dosya.
+
 ## Mesaj Silme / Düzenleme
 
 Herhangi bir mesaja **sağ tıklayın**:
@@ -143,15 +206,20 @@ ZeroChat/
 ├── app.py               # Ana uygulama (GUI + ağ yönetimi)
 ├── config.py            # Port, aralık, grup ve renk tanımları
 ├── storage.py           # Mesaj geçmişi (JSON dosya I/O)
+├── session_log.py       # Oturum kaydı (paket analizi)
 ├── gui/
 │   ├── sidebar.py       # Sol panel - gruplar, cihaz listesi, arama
 │   ├── chat_area.py     # Sağ panel - mesaj alanı (kaydırılabilir)
 │   ├── message_bubble.py # Mesaj balonu (sağ tık menüsü)
-│   └── poll_card.py     # Anket kartı
+│   ├── poll_card.py     # Anket kartı
+│   ├── file_card.py     # Dosya kartı (ilerleme çubuğu)
+│   └── pairing_dialog.py # Eşleştirme penceresi
 ├── network/
 │   ├── socket.py        # UDP socket, IP/MAC tespiti, heartbeat
 │   └── packet.py        # JSON paket oluşturma/çözümleme
 ├── history.json         # Otomatik oluşur (geçmiş dosyası)
+├── sessions/            # Otomatik oluşur (oturum kayıtları)
+├── downloads/           # Otomatik oluşur (indirilen dosyalar)
 ├── README.md
 └── AG_ANLATIMI.md       # Ağ kavramları rehberi (öğrenciler için)
 ```
@@ -176,6 +244,15 @@ ZeroChat/
 | `POLL_MAX_OPTIONS` | 6 | Ankette azami seçenek sayısı |
 | `HISTORY_FILE` | `"history.json"` | Geçmiş dosyası adı |
 | `HISTORY_SAVE_ON_CLOSE` | `True` | Kapanırken geçmişi kaydet |
+| `STEALTH_HIDE_COMPLETELY` | `False` | Gizli cihazları tamamen gizle |
+| `SESSION_LOG_ENABLED` | `True` | Oturum kaydı açık mı |
+| `SESSION_LOG_DIR` | `"sessions"` | Oturum kayıtları klasörü |
+| `SCHEDULE_CHECK_INTERVAL` | 1 | Zamanlı mesaj kontrol aralığı (sn) |
+| `PAIR_CODE_LENGTH` | 6 | Pairing kodu uzunluğu |
+| `PAIR_CODE_TIMEOUT` | 300 | Pairing kodu geçerlilik süresi (sn) |
+| `FILE_MAX_SIZE` | 5 MB | Maks dosya boyutu |
+| `FILE_CHUNK_SIZE` | 800 | Parça boyutu (bayt) |
+| `DOWNLOAD_DIR` | `"downloads"` | İndirilen dosyaların klasörü |
 
 ## Arayüz Seçimi (Önemli)
 

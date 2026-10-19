@@ -24,8 +24,11 @@ from config import (
     HEARTBEAT_INTERVAL,
     BROADCAST_ADDRESS,
     SEND_TO_LIMITED_BROADCAST,
+    FILE_MAX_SIZE,
+    FILE_CHUNK_SIZE,
 )
 from network import packet
+from session_log import SessionLogger
 
 LIMITED_BROADCAST = "255.255.255.255"
 
@@ -373,6 +376,12 @@ class NetworkManager:
         self.listener_thread = None
         self.heartbeat_thread = None
 
+        # Gizli mod: presence paketi gönderilmez
+        self.stealth = False
+
+        # Oturum kaydı
+        self.logger = SessionLogger()
+
         # Cihaz kimliği: MAC adresi
         self.interface = select_primary_interface()
         self.ip = self.interface["ip"] if self.interface else _ip_by_connect()
@@ -407,8 +416,24 @@ class NetworkManager:
         """Durdurur ve çıkış bildirimi gönderir."""
         self.running = False
         if self.sock:
-            self.send_presence("offline")
+            if not self.stealth:
+                self.send_presence("offline")
             self.sock.close()
+        self.logger.close()
+
+    def set_stealth(self, enabled):
+        """Gizli modu açar/kapatır.
+
+        Gizli moddayken presence paketi gönderilmez, böylece cihaz
+        ağ taramasında görünmez. Mesaj gönderildiğinde karşı taraf
+        cihazı tanır.
+        """
+        self.stealth = enabled
+        if enabled:
+            # Gizli moda geçerken çıkış bildirimi gönderme
+            self.send_presence("hidden")
+        else:
+            self.send_presence("online")
 
     def send_message(self, target_id, content):
         """Belirli bir cihaza (MAC ID veya grup kimliği) mesaj gönderir."""
@@ -451,12 +476,84 @@ class NetworkManager:
         pkt = packet.create_edit_notice(msg_id, new_content, self.user_id, target_id)
         self._send(pkt)
 
+    def send_file_nack(self, file_id, missing_indexes, target_id):
+        """Eksik parçaların tekrar istenmesini gönderir."""
+        pkt = packet.create_file_nack(file_id, missing_indexes, target_id)
+        self._send(pkt)
+
     def send_presence(self, status):
         """Kimlik/keşif paketi gönderir (IP ve MAC dahil)."""
         pkt = packet.create_presence(
             self.user_id, self.user_name, status, self.ip, self.mac
         )
         self._send(pkt)
+
+    def send_pair_request(self, code):
+        """Eşleştirme isteği gönderir."""
+        pkt = packet.create_pair_request(
+            self.user_id, self.user_name, code
+        )
+        self._send(pkt)
+
+    def send_pair_response(self, accept, target_id, code=""):
+        """Eşleştirme isteğini kabul/reddeder."""
+        pkt = packet.create_pair_response(
+            accept, self.user_id, self.user_name, target_id, code
+        )
+        self._send(pkt)
+
+    def send_file(self, target_id, filepath, progress_callback=None):
+        """Dosyayı parçalara bölerek gönderir.
+
+        Returns: (file_id, sha256) veya hata durumunda (None, None)
+        """
+        import base64
+        import hashlib
+        import os
+        import uuid
+
+        try:
+            with open(filepath, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            print(f"Dosya okunamadi: {e}")
+            return None, None
+
+        if len(data) > FILE_MAX_SIZE:
+            raise ValueError(
+                f"Dosya cok buyuk ({len(data) / 1024 / 1024:.1f} MB). "
+                f"En fazla {FILE_MAX_SIZE / 1024 / 1024:.0f} MB."
+            )
+
+        file_id = uuid.uuid4().hex[:8]
+        file_name = os.path.basename(filepath)
+        total_chunks = max(1, (len(data) + FILE_CHUNK_SIZE - 1) // FILE_CHUNK_SIZE)
+        sha256 = hashlib.sha256(data).hexdigest()
+        mime = _guess_mime(file_name)
+
+        # Başlangıç paketi
+        start = packet.create_file_start(
+            file_id, file_name, len(data), mime, total_chunks,
+            FILE_CHUNK_SIZE, target_id, sha256,
+        )
+        self._send(start)
+
+        # Parçalar
+        for index in range(total_chunks):
+            chunk = data[index * FILE_CHUNK_SIZE:(index + 1) * FILE_CHUNK_SIZE]
+            pkt = packet.create_file_chunk(
+                file_id, index, total_chunks,
+                base64.b64encode(chunk).decode("ascii"), target_id,
+            )
+            self._send(pkt)
+            if progress_callback:
+                progress_callback(index + 1, total_chunks)
+
+        # Bitiş paketi
+        end = packet.create_file_end(file_id, sha256, target_id)
+        self._send(end)
+
+        return file_id, sha256
 
     def _send(self, pkt):
         """Paketi broadcast olarak gönderir.
@@ -475,13 +572,17 @@ class NetworkManager:
             except Exception as e:
                 print(f"Gönderme hatası ({target}): {e}")
 
+        # Oturum kaydı
+        self.logger.log_out(pkt, len(data))
+
     def _heartbeat(self):
         """Her HEARTBEAT_INTERVAL saniyede bir tarama yapar.
 
-        Bu sayede ağa bağlı tüm cihazlar birbirini otomatik bulur.
+        Gizli modda presence gönderilmez - cihaz ağda görünmez.
         """
         while self.running:
-            self.send_presence("online")
+            if not self.stealth:
+                self.send_presence("online")
             for _ in range(int(HEARTBEAT_INTERVAL / 0.5)):
                 if not self.running:
                     return
@@ -494,8 +595,16 @@ class NetworkManager:
                 data, addr = self.sock.recvfrom(BUFFER_SIZE)
                 pkt = packet.decode(data)
                 if pkt:
+                    self.logger.log_in(pkt, len(data))
                     self.on_message(pkt)
             except socket.timeout:
                 continue
             except OSError:
                 break
+
+
+def _guess_mime(filename):
+    """Dosya adından MIME türü tahmin eder."""
+    import mimetypes
+    mime, _ = mimetypes.guess_type(filename)
+    return mime or "application/octet-stream"

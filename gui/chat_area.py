@@ -5,9 +5,10 @@ El kaldırma göstergesi ve anket kartlarını barındırır.
 """
 
 import tkinter as tk
-from config import COLORS
+from config import COLORS, SCHEDULE_MAX_MINUTES
 from gui.message_bubble import MessageBubble
 from gui.poll_card import PollCard
+from gui.file_card import FileCard
 
 
 class ChatArea(tk.Frame):
@@ -21,7 +22,8 @@ class ChatArea(tk.Frame):
     def __init__(self, parent, on_send_message, on_delete_message=None,
                  on_edit_message=None, on_copy_message=None,
                  on_hand_raise=None, on_poll_create=None,
-                 on_poll_vote=None, on_poll_close=None, my_user_id=""):
+                 on_poll_vote=None, on_poll_close=None, my_user_id="",
+                 on_schedule_message=None, on_send_file=None):
         super().__init__(parent, bg=COLORS["chat_area"])
         self.on_send_message = on_send_message
         self.on_delete_message = on_delete_message
@@ -31,6 +33,8 @@ class ChatArea(tk.Frame):
         self.on_poll_create = on_poll_create
         self.on_poll_vote = on_poll_vote
         self.on_poll_close = on_poll_close
+        self.on_schedule_message = on_schedule_message
+        self.on_send_file = on_send_file
         self.my_user_id = my_user_id
 
         self.current_chat_id = None
@@ -41,6 +45,8 @@ class ChatArea(tk.Frame):
         self.hands_widgets = {}
         # poll_id -> PollCard
         self.poll_cards = {}
+        # file_id -> FileCard
+        self.file_cards = {}
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -128,6 +134,22 @@ class ChatArea(tk.Frame):
         )
         self.msg_entry.pack(side="left", fill="x", expand=True, padx=10, pady=10, ipady=5)
         self.msg_entry.bind("<Return>", self._on_send)
+
+        # Zamanlanmış mesaj
+        schedule_btn = tk.Label(
+            input_frame, text="⏰", font=("Segoe UI", 15),
+            bg=COLORS["sidebar"], fg=COLORS["text_secondary"], cursor="hand2",
+        )
+        schedule_btn.pack(side="right", padx=6)
+        schedule_btn.bind("<Button-1>", self._on_schedule_click)
+
+        # Dosya gönder
+        file_btn = tk.Label(
+            input_frame, text="📎", font=("Segoe UI", 14),
+            bg=COLORS["sidebar"], fg=COLORS["text_secondary"], cursor="hand2",
+        )
+        file_btn.pack(side="right", padx=6)
+        file_btn.bind("<Button-1>", self._on_file_click)
 
         self.send_button = tk.Button(
             input_frame, text="Gönder",
@@ -397,3 +419,138 @@ class ChatArea(tk.Frame):
     def _on_poll_close(self, poll_id):
         if self.on_poll_close:
             self.on_poll_close(poll_id)
+
+    # =====================================================================
+    # Dosya paylaşımı
+    # =====================================================================
+
+    def _on_file_click(self, event=None):
+        """Dosya seçme penceresini açar."""
+        from tkinter import filedialog
+
+        if not self.current_chat_id:
+            return
+        if not self.on_send_file:
+            return
+
+        path = filedialog.askopenfilename(
+            title="Gönderilecek dosyayı seçin",
+            filetypes=[("Tüm dosyalar", "*.*")],
+        )
+        if path:
+            self.on_send_file(self.current_chat_id, path)
+
+    def show_file_card(self, file_id, meta, received=0, total=0, outgoing=False):
+        """Dosya kartını ekrana ekler."""
+        if file_id in self.file_cards:
+            self.update_file_card(file_id, received, total)
+            return
+
+        card = FileCard(
+            self.msg_container, file_id, meta,
+            received=received, total=total, outgoing=outgoing,
+        )
+        card.pack(fill="x", padx=25, pady=4)
+
+        self.file_cards[file_id] = card
+        self._update_scrollregion()
+        self.canvas.yview_moveto(1.0)
+
+    def update_file_card(self, file_id, received, total):
+        """Dosya kartının ilerlemesini günceller."""
+        card = self.file_cards.get(file_id)
+        if card:
+            card.update_progress(received, total)
+
+    def mark_file_done(self, file_id, path, name, size):
+        """Dosya kartını tamamlandı olarak işaretler."""
+        card = self.file_cards.get(file_id)
+        if card:
+            card.mark_done(path, name, size)
+
+    def mark_file_failed(self, file_id, reason):
+        """Dosya kartını hata durumuna alır."""
+        card = self.file_cards.get(file_id)
+        if card:
+            card.mark_failed(reason)
+
+    def remove_file_card(self, file_id):
+        """Dosya kartını ekrandan kaldırır."""
+        card = self.file_cards.pop(file_id, None)
+        if card:
+            card.destroy()
+            self._update_scrollregion()
+
+    # =====================================================================
+    # Zamanlı mesaj
+    # =====================================================================
+
+    def _on_schedule_click(self, event=None):
+        """Zamanlı mesaj penceresini açar."""
+        if not self.current_chat_id:
+            return
+        if not self.on_schedule_message:
+            return
+
+        text = self.msg_entry.get().strip()
+        if not text:
+            from tkinter import messagebox
+            messagebox.showwarning("Uyarı", "Önce mesajı yazın!")
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Zamanlı Mesaj")
+        dialog.geometry("340x230")
+        dialog.configure(bg=COLORS["sidebar"])
+        dialog.transient(self)
+
+        tk.Label(
+            dialog, text="Ne zaman gönderilsin?",
+            font=("Segoe UI", 11, "bold"), bg=COLORS["sidebar"],
+            fg=COLORS["text"],
+        ).pack(anchor="w", padx=15, pady=(15, 8))
+
+        tk.Label(
+            dialog, text=f"Mesaj: {text[:40]}{'...' if len(text) > 40 else ''}",
+            font=("Segoe UI", 8), bg=COLORS["sidebar"],
+            fg=COLORS["text_secondary"], wraplength=300, justify="left",
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+
+        # Dakika seçimi
+        tk.Label(
+            dialog, text="Dakika sonra:", font=("Segoe UI", 10),
+            bg=COLORS["sidebar"], fg=COLORS["text"],
+        ).pack(anchor="w", padx=15)
+
+        minutes_var = tk.IntVar(value=5)
+        spin = tk.Spinbox(
+            dialog, from_=1, to=SCHEDULE_MAX_MINUTES, textvariable=minutes_var,
+            font=("Segoe UI", 12), width=8, bg=COLORS["background"],
+            relief="flat", highlightthickness=1,
+            highlightbackground=COLORS["border"],
+        )
+        spin.pack(anchor="w", padx=15, pady=(4, 8))
+
+        # Hızlı seçenekler
+        quick = tk.Frame(dialog, bg=COLORS["sidebar"])
+        quick.pack(fill="x", padx=15, pady=(0, 10))
+        for label, value in (("5 dk", 5), ("15 dk", 15), ("1 sa", 60), ("1 gün", 1440)):
+            tk.Button(
+                quick, text=label, bg=COLORS["background"], fg=COLORS["text"],
+                relief="flat", font=("Segoe UI", 8), padx=8,
+                command=lambda v=value: minutes_var.set(v),
+            ).pack(side="left", padx=2)
+
+        def schedule():
+            minutes = minutes_var.get()
+            if minutes < 1:
+                return
+            self.on_schedule_message(self.current_chat_id, text, minutes)
+            self.msg_entry.delete(0, "end")
+            dialog.destroy()
+
+        tk.Button(
+            dialog, text="Zamanla", bg=COLORS["accent"], fg="white",
+            relief="flat", font=("Segoe UI", 11, "bold"), pady=6,
+            command=schedule,
+        ).pack(pady=8)
