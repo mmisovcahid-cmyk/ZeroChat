@@ -24,6 +24,21 @@ SEND_TO_LIMITED_BROADCAST = False
 HEARTBEAT_INTERVAL = 3      # Kaç saniyede bir tarama yapılsın
 OFFLINE_TIMEOUT = 12        # Kaç saniye sessizlik sonrası "Çevrimdışı" sayılsın
 
+# Grup Sohbeti
+GROUP_ALL = "ALL"           # Tüm ağa gönderilen grup mesajları
+GROUP_PREFIX = "GRP:"       # Özel grup kimliği öneki (örn. "GRP:sinifA")
+GROUP_PUBLIC = "public"     # Herkes katılabilir
+GROUP_PRIVATE = "private"   # Sadece davet kodu ile (admin onaylı)
+INVITE_CODE_LENGTH = 6      # Davet kodu uzunluğu
+
+# Canlı Anket
+POLL_MIN_OPTIONS = 2
+POLL_MAX_OPTIONS = 6
+
+# Mesaj Geçmişi (dosya)
+HISTORY_FILE = "history.json"
+HISTORY_SAVE_ON_CLOSE = True
+
 # Renk Teması (WhatsApp Sade)
 COLORS = {
     "background": "#F0F2F5",

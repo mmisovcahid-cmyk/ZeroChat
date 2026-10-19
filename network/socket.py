@@ -411,10 +411,44 @@ class NetworkManager:
             self.sock.close()
 
     def send_message(self, target_id, content):
-        """Belirli bir cihaza (MAC ID) mesaj gönderir."""
+        """Belirli bir cihaza (MAC ID veya grup kimliği) mesaj gönderir."""
         pkt = packet.create_message(
             self.user_id, self.user_name, target_id, content
         )
+        self._send(pkt)
+        return pkt["msg_id"]
+
+    def send_group_action(self, action, group, target_id="", visibility="",
+                          code=""):
+        """Grup işlemi bildirimi gönderir."""
+        pkt = packet.create_group_action(
+            action, group, self.user_id, self.user_name,
+            target_id=target_id, visibility=visibility, code=code,
+        )
+        self._send(pkt)
+
+    def send_hand_raise(self, msg_id, action):
+        """El kaldırma bildirimi gönderir."""
+        pkt = packet.create_hand_raise(msg_id, action, self.user_id, self.user_name)
+        self._send(pkt)
+
+    def send_poll(self, action, poll_id, question="", options=None,
+                  option_index=-1, target_id=""):
+        """Anket bildirimi gönderir."""
+        pkt = packet.create_poll(
+            action, poll_id, question, options,
+            self.user_id, self.user_name, option_index, target_id,
+        )
+        self._send(pkt)
+
+    def send_delete_notice(self, msg_id, target_id):
+        """Mesaj silme bildirimi gönderir."""
+        pkt = packet.create_delete_notice(msg_id, self.user_id, target_id)
+        self._send(pkt)
+
+    def send_edit_notice(self, msg_id, new_content, target_id):
+        """Mesaj düzenleme bildirimi gönderir."""
+        pkt = packet.create_edit_notice(msg_id, new_content, self.user_id, target_id)
         self._send(pkt)
 
     def send_presence(self, status):

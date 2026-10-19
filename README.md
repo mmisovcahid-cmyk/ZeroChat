@@ -11,6 +11,14 @@
 - **IP + MAC gösterimi** - Kontak listesinde her cihazın IP ve MAC adresi görünür
 - **Özel mesajlaşma** - Mesajlar sadece hedef cihaza gösterilir
 - **Çevrimiçi/çevrimdışı durumu** - Yeşil nokta (çevrimiçi) / gri nokta (çevrimdışı)
+- **Grup sohbeti** - "Tüm Ağ" veya adlandırılmış gruplar (GRP:sinif)
+- **Grup yönetimi** - Admin belirler, üye çıkarır, grubu siler
+- **Gizli / herkese açık gruplar** - Davet kodu ile gizli gruplar
+- **Canlı anket** - Öğretmen anket açar, sonuçlar anında görünür
+- **Eller kaldırma** - Mesaja sağ tıkla, el kaldır
+- **Mesaj geçmişi** - Sohbetler `history.json` dosyasına kaydedilir, açılışta geri yüklenir
+- **Mesaj silme / düzenleme** - Sağ tık menüsü ile
+- **Kaydırılabilir mesaj alanı** - Çok fazla mesajda ekran bozulmaz
 - **Türkçe arayüz** - Öğrenciler için sade ve anlaşılır
 
 ## Kurulum
@@ -40,20 +48,110 @@ python main.py
 
 Cihaz listede yoksa "+ Yeni Sohbet" ile MAC adresini elle girebilirsiniz.
 
+## Grup Sohbeti
+
+Sol panelde **GRUPLAR** bölümü vardır:
+
+- **Tüm Ağ** - Herkese birden gönderim (her zaman mevcut)
+- **+ Oluştur** ile yeni grup, **+ Katıl** ile mevcut gruba katılım
+
+Aynı grup adını kullanan herkes aynı gruba katılır. Grup üyeliği ağ üzerinden
+bildirilir, üye sayısı listede görünür.
+
+### Grup Yönetimi (Admin)
+
+Grubu **kuran kişi yöneticidir** (★ rozeti). Yönetici, grup adının yanındaki
+**⋯** butonuna basarak yönetim penceresini açar:
+
+| Yetki | Yönetici | Üye |
+|-------|:--------:|:----:|
+| Grubu silme | ✓ | ✗ |
+| Üye çıkarma | ✓ | ✗ |
+| Görünürlük değiştirme | ✓ | ✗ |
+| Davet kodu görme | ✓ | ✗ |
+
+Yönetici ayrılırsa ve üye kalırsa, bir sonraki üye yeni yönetici olur.
+
+### Gizli / Herkese Açık Gruplar
+
+Grup oluştururken erişim seçilir:
+
+- **Herkese açık** - Herkes "Gruba Katıl" ile direkt girer
+- **Gizli** - 6 haneli davet kodu gerekir (örn. `3TKKFK`)
+
+Gizli grupta katılım şöyle işler:
+1. Öğrenci kodu girer → gruba katılma **isteği** yöneticinin listesine düşer
+2. Yönetici "Kabul" der → öğrenci gruba katılır
+
+Yönetici penceresinde bekleyen istekler listelenir, her biri için
+**Kabul / Reddet** butonu vardır.
+
+## Canlı Anket
+
+Sağ paneldeki **📊 Anket** butonuna basın:
+
+1. Soruyu ve seçenekleri girin (her seçenek ayrı satırda)
+2. Anket açılır ve gruba yayınlanır
+3. Herkes oy verir, sonuçlar **anında** güncellenir
+4. Anketi açan kişi "Anketi Kapat" diyerek bitirir
+
+Oy veren kişinin seçtği seçenek yeşil vurgulanır. Sonuçlar yüzde ve oy
+sayısı olarak gösterilir.
+
+## Eller Kaldırma
+
+Bir mesaja **sağ tıklayın** → "✋ El Kaldır". Mesajın altında el kaldıranların
+listesi görünür. Tekrar sağ tıklayıp "Elini İndir" ile kaldırılabilir.
+
+Öğretmen sınıfa bir soru sorduğunda öğrenciler el kaldırır, öğretmen kimin
+takıldığını anında görür.
+
+## Mesaj Silme / Düzenleme
+
+Herhangi bir mesaja **sağ tıklayın**:
+
+| Seçenek | Ne yapar |
+|---------|----------|
+| **Kopyala** | Panoya kopyalar |
+| **Düzenle** | Mesajı düzenleme moduna alır (buton "Kaydet" olur) |
+| **Sil** | Onay ister, mesajı siler |
+
+Silme ve düzenleme karşı tarafa da bildirilir, ekranlar senkron kalır.
+
+## Mesaj Geçmişi
+
+Uygulama kapanırken sohbetler `history.json` dosyasına yazılır. Uygulama
+açıldığında otomatik geri yüklenir.
+
+Dosya formatı (JSON):
+```json
+{
+  "BB:66:77:88:99:AA": [
+    [false, {"type": "message", "msg_id": "a1b2c3d4", "content": "Merhaba", ...}],
+    [true,  {"type": "message", "msg_id": "e5f6g7h8", "content": "Selam", ...}]
+  ]
+}
+```
+
+`[is_outgoing, mesaj]` — `true` = sizin gönderdiğiniz, `false` = karşı tarafın.
+
 ## Dosya Yapısı
 
 ```
 ZeroChat/
 ├── main.py              # Giriş ekranı
 ├── app.py               # Ana uygulama (GUI + ağ yönetimi)
-├── config.py            # Port, aralık, renk tanımları
+├── config.py            # Port, aralık, grup ve renk tanımları
+├── storage.py           # Mesaj geçmişi (JSON dosya I/O)
 ├── gui/
-│   ├── sidebar.py       # Sol panel - cihaz listesi, arama
-│   ├── chat_area.py     # Sağ panel - mesaj alanı
-│   └── message_bubble.py # Mesaj balonu
+│   ├── sidebar.py       # Sol panel - gruplar, cihaz listesi, arama
+│   ├── chat_area.py     # Sağ panel - mesaj alanı (kaydırılabilir)
+│   ├── message_bubble.py # Mesaj balonu (sağ tık menüsü)
+│   └── poll_card.py     # Anket kartı
 ├── network/
 │   ├── socket.py        # UDP socket, IP/MAC tespiti, heartbeat
 │   └── packet.py        # JSON paket oluşturma/çözümleme
+├── history.json         # Otomatik oluşur (geçmiş dosyası)
 ├── README.md
 └── AG_ANLATIMI.md       # Ağ kavramları rehberi (öğrenciler için)
 ```
@@ -69,6 +167,15 @@ ZeroChat/
 | `SEND_TO_LIMITED_BROADCAST` | `False` | Subnet broadcast'un yanında sınırlı broadcast'a da gönder |
 | `HEARTBEAT_INTERVAL` | 3 | Tarama aralığı (saniye) |
 | `OFFLINE_TIMEOUT` | 12 | Çevrimdışı sayılma süresi (saniye) |
+| `GROUP_ALL` | `"ALL"` | Tüm ağa gönderim kimliği |
+| `GROUP_PREFIX` | `"GRP:"` | Özel grup kimliği öneki |
+| `GROUP_PUBLIC` | `"public"` | Herkese açık grup |
+| `GROUP_PRIVATE` | `"private"` | Gizli grup (davet kodu ile) |
+| `INVITE_CODE_LENGTH` | 6 | Davet kodu uzunluğu |
+| `POLL_MIN_OPTIONS` | 2 | Ankette asgari seçenek sayısı |
+| `POLL_MAX_OPTIONS` | 6 | Ankette azami seçenek sayısı |
+| `HISTORY_FILE` | `"history.json"` | Geçmiş dosyası adı |
+| `HISTORY_SAVE_ON_CLOSE` | `True` | Kapanırken geçmişi kaydet |
 
 ## Arayüz Seçimi (Önemli)
 

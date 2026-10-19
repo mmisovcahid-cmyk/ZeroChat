@@ -9,6 +9,7 @@ from tkinter import messagebox
 from config import COLORS
 from app import ZeroChatApp
 from network.socket import get_local_ip, get_mac_address, get_subnet_broadcast
+import storage
 
 
 def show_login():
@@ -81,7 +82,19 @@ def show_login():
         font=("Consolas", 9),
         bg=COLORS["sidebar"],
         fg=COLORS["text_secondary"],
-    ).pack(anchor="w", padx=55, pady=(0, 15))
+    ).pack(anchor="w", padx=55, pady=(0, 5))
+
+    # Kayıtlı geçmiş var mı?
+    history = storage.load_history()
+    if history:
+        total = sum(len(m) for m in history.values())
+        tk.Label(
+            login_window,
+            text=f"{len(history)} sohbet, {total} mesaj kayıtlı",
+            font=("Segoe UI", 8),
+            bg=COLORS["sidebar"],
+            fg=COLORS["online"],
+        ).pack(anchor="w", padx=55, pady=(0, 10))
 
     def start():
         user_name = entry.get().strip()

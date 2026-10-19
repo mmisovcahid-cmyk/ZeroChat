@@ -6,6 +6,9 @@ __pycache__/
 venv/
 env/
 
+# Kullanıcı verisi (kişisel sohbet geçmişi)
+history.json
+
 # IDE
 .vscode/
 .idea/

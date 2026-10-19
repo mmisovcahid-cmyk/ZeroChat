@@ -4,16 +4,25 @@ Mesajları JSON formatında paketler.
 """
 
 import json
+import random
+import string
+import uuid
 from datetime import datetime
 
 
-def create_message(sender_id, sender_name, target_id, content):
+# ---------------------------------------------------------------------------
+# Mesaj
+# ---------------------------------------------------------------------------
+
+def create_message(sender_id, sender_name, target_id, content, msg_id=None):
     """Mesaj paketi oluşturur.
 
-    sender_id / target_id: MAC adresi (cihaz kimliği)
+    sender_id / target_id: MAC adresi veya grup kimliği
+    msg_id: benzersiz mesaj numarası (silme/düzenleme için)
     """
     return {
         "type": "message",
+        "msg_id": msg_id or uuid.uuid4().hex[:8],
         "sender_id": sender_id,
         "sender_name": sender_name,
         "target_id": target_id,
@@ -38,6 +47,111 @@ def create_presence(user_id, user_name, status="online", ip="", mac=""):
         "timestamp": datetime.now().strftime("%H:%M"),
     }
 
+
+# ---------------------------------------------------------------------------
+# Grup işlemleri
+# ---------------------------------------------------------------------------
+
+def create_group_action(action, group, user_id, user_name="",
+                        target_id="", visibility="", code=""):
+    """Grup işlemi paketi oluşturur.
+
+    action: join, leave, invite_request, invite_accept, invite_reject,
+            remove_member, delete_group, set_visibility, transfer_admin
+    """
+    return {
+        "type": "group_action",
+        "action": action,
+        "group": group,
+        "user_id": user_id,
+        "user_name": user_name,
+        "target_id": target_id,   # işlem hedefi (üye, davet vb.)
+        "visibility": visibility, # public / private
+        "code": code,             # davet kodu
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def generate_invite_code(length=6):
+    """Rastgele davet kodu üretir (BÜYÜK HARF + RAKAM)."""
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
+
+
+# ---------------------------------------------------------------------------
+# Mesaj düzenleme / silme
+# ---------------------------------------------------------------------------
+
+def create_delete_notice(msg_id, user_id, target_id):
+    """Mesaj silme bildirimi oluşturur."""
+    return {
+        "type": "delete_message",
+        "msg_id": msg_id,
+        "user_id": user_id,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+def create_edit_notice(msg_id, new_content, user_id, target_id):
+    """Mesaj düzenleme bildirimi oluşturur."""
+    return {
+        "type": "edit_message",
+        "msg_id": msg_id,
+        "content": new_content,
+        "user_id": user_id,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# El kaldırma
+# ---------------------------------------------------------------------------
+
+def create_hand_raise(msg_id, action, user_id, user_name=""):
+    """El kaldırma bildirimi oluşturur.
+
+    action: "raise" (el kaldır) veya "lower" (el indir)
+    """
+    return {
+        "type": "hand_raise",
+        "msg_id": msg_id,
+        "action": action,
+        "user_id": user_id,
+        "user_name": user_name,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Canlı anket
+# ---------------------------------------------------------------------------
+
+def create_poll(action, poll_id, question="", options=None, user_id="",
+                user_name="", option_index=-1, target_id=""):
+    """Anket paketi oluşturur.
+
+    action: "create" (anket aç), "vote" (oy ver), "close" (anketi kapat)
+    target_id: anketin hangi sohbette açıldığı
+    """
+    return {
+        "type": "poll",
+        "action": action,
+        "poll_id": poll_id,
+        "question": question,
+        "options": options or [],
+        "user_id": user_id,
+        "user_name": user_name,
+        "option_index": option_index,
+        "target_id": target_id,
+        "timestamp": datetime.now().strftime("%H:%M"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Serileştirme
+# ---------------------------------------------------------------------------
 
 def encode(packet):
     """Paketi JSON string'e çevirip byte'lara encode eder."""
