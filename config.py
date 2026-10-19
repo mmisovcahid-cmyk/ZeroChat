@@ -5,8 +5,20 @@ Tüm sabitler burada tanımlanır.
 
 # Ağ Ayarları
 UDP_PORT = 5000
-BROADCAST_ADDRESS = "255.255.255.255"
 BUFFER_SIZE = 4096
+
+# Broadcast Hedefi
+#   None  -> Aktif arayüzün subnet broadcast adresi (önerilen)
+#            Örnek: IP 192.168.100.17 / Maske 255.255.255.0 -> 192.168.100.255
+#            Bu adres paketin DOGRU arayüzden (Wi-Fi/Ethernet) çıkmasını garanti eder.
+#
+#   "255.255.255.255" -> Sınırlı broadcast (tüm arayüzlere birden gider)
+#            Çok sayıda sanal adaptör (VirtualBox/Hyper-V) varsa karışabilir.
+BROADCAST_ADDRESS = None
+
+# Subnet broadcast'un yanında sınırlı broadcast'a da gönderilsin mi?
+# İki hedef açıkken aynı mesaj iki kez gelebilir; mesajlar yinelenmez (dedupe).
+SEND_TO_LIMITED_BROADCAST = False
 
 # Otomatik Cihaz Keşfi (Heartbeat)
 HEARTBEAT_INTERVAL = 3      # Kaç saniyede bir tarama yapılsın

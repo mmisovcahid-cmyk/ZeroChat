@@ -8,7 +8,7 @@ from tkinter import messagebox
 
 from config import COLORS
 from app import ZeroChatApp
-from network.socket import get_local_ip, get_mac_address
+from network.socket import get_local_ip, get_mac_address, get_subnet_broadcast
 
 
 def show_login():
@@ -56,7 +56,8 @@ def show_login():
 
     # Cihaz kimliği bilgisi
     local_ip = get_local_ip()
-    local_mac = get_mac_address()
+    local_mac = get_mac_address(local_ip)
+    local_broadcast = get_subnet_broadcast(local_ip)
 
     tk.Label(
         login_window,
@@ -76,7 +77,7 @@ def show_login():
 
     tk.Label(
         login_window,
-        text=f"IP: {local_ip}",
+        text=f"IP: {local_ip}   |   Yayın: {local_broadcast}",
         font=("Consolas", 9),
         bg=COLORS["sidebar"],
         fg=COLORS["text_secondary"],

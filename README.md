@@ -40,15 +40,6 @@ python main.py
 
 Cihaz listede yoksa "+ Yeni Sohbet" ile MAC adresini elle girebilirsiniz.
 
-## Sorun Giderme
-
-| Sorun | Çözüm |
-|-------|-------|
-| Cihazlar görünmüyor | Firewall'da Python'a izin verin (Özel ağlar için) |
-| "Address already in use" | Başka bir ZeroChat örneği çalışıyor, kapatın |
-| Mesajlar ulaşmıyor | Aynı subnet'te olduklarından emin olun (IP'ler 192.168.x.x) |
-| Broadcast çalışmıyor | Ağ yöneticisi/VLAN ayarlarını kontrol edin |
-
 ## Dosya Yapısı
 
 ```
@@ -74,6 +65,37 @@ ZeroChat/
 | Ayar | Varsayılan | Açıklama |
 |------|-----------|----------|
 | `UDP_PORT` | 5000 | Dinleme portu |
-| `BROADCAST_ADDRESS` | 255.255.255.255 | Broadcast adresi |
+| `BROADCAST_ADDRESS` | `None` | `None` = otomatik subnet broadcast. `"255.255.255.255"` = sınırlı broadcast |
+| `SEND_TO_LIMITED_BROADCAST` | `False` | Subnet broadcast'un yanında sınırlı broadcast'a da gönder |
 | `HEARTBEAT_INTERVAL` | 3 | Tarama aralığı (saniye) |
 | `OFFLINE_TIMEOUT` | 12 | Çevrimdışı sayılma süresi (saniye) |
+
+## Arayüz Seçimi (Önemli)
+
+Bilgisayarınızda birden fazla ağ arayüzü olabilir (Wi-Fi, Ethernet, VirtualBox,
+Hyper-V, Docker, WSL). Uygulama **gerçek ağ adaptörünü** otomatik seçer:
+
+1. Default Gateway'i olan + sanal olmayan adaptör
+2. Sanal olmayan adaptör (sadece switch'e bağlıysanız)
+3. Diğerleri
+
+Sanal adaptörler şu yollarla tespit edilir:
+- Adaptör adı (`VirtualBox`, `Hyper-V`, `VMware`, `Docker`...)
+- MAC ön eki (`0A-00-27` = VirtualBox, `00-15-5D` = Hyper-V)
+- IP aralığı (`192.168.56.x` = VirtualBox varsayılan ağı)
+
+Broadcast paketleri **subnet broadcast adresine** gönderilir
+(ör. `192.168.100.255`), böylece doğru arayüzden çıkar.
+
+Üst çubukta seçilen arayüzü görebilirsiniz: `Yayın: 192.168.100.255`
+
+## Sorun Giderme
+
+| Sorun | Çözüm |
+|-------|-------|
+| Cihazlar görünmüyor | Firewall'da Python'a izin verin (Özel ağlar için) |
+| Yanlış IP görünüyor | Üst çubuktaki `Yayın:` adresine bakın, `192.168.x.255` olmalı |
+| Broadcast engellendi | `netsh advfirewall firewall add rule name="ZeroChat" dir=in action=allow protocol=UDP localport=5000` |
+| "Address already in use" | Başka bir ZeroChat örneği çalışıyor, kapatın |
+| Farklı subnet | `ipconfig` ile IP'leri karşılaştırın, aynı `192.168.x.x` olmalı |
+| Mesajlar ulaşmıyor | Ağ yöneticisinde "AP Isolation" kapalı mı kontrol edin |

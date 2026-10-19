@@ -32,6 +32,7 @@ class ZeroChatApp:
         self.user_name = ""    # kullanıcının seçtiği görünen isim
         self.my_ip = ""
         self.my_mac = ""
+        self.broadcast_address = ""
 
         # device_id -> {"name", "ip", "mac", "last_seen", "online"}
         self.devices = {}
@@ -53,6 +54,7 @@ class ZeroChatApp:
         self.my_ip = self.network.ip
         # user_id zaten MAC adresidir; ağda bu kimlikle tanınıyoruz
         self.my_mac = user_id
+        self.broadcast_address = self.network.broadcast_address
 
         # GUI bileşenlerini oluştur
         self._build_gui()
@@ -80,6 +82,14 @@ class ZeroChatApp:
             bg=COLORS["accent"],
             fg="white",
         ).pack(side="left", padx=10)
+
+        tk.Label(
+            info_bar,
+            text=f"Yayın: {self.broadcast_address}",
+            font=("Segoe UI", 8),
+            bg=COLORS["accent"],
+            fg="white",
+        ).pack(side="left", padx=(0, 10))
 
         self.online_label = tk.Label(
             info_bar,

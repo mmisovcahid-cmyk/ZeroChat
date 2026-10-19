@@ -86,6 +86,70 @@ Gönderen → 255.255.255.255:5000 → TÜM CİHAZLAR
 
 ---
 
+## 5.1 Subnet Broadcast Adresi
+
+Sınırlı broadcast (`255.255.255.255`) yerine, cihazın kendi subnet'inin
+broadcast adresi kullanılır.
+
+```
+IP    : 192.168.100.17
+Maske : 255.255.255.0
+Yayın : 192.168.100.255   ← subnet broadcast
+```
+
+**Hesaplama:** IP adresini maskeleme ile "ters çevirip" OR işlemi yapılır.
+
+```python
+import ipaddress
+network = ipaddress.ip_network("192.168.100.17/255.255.255.0", strict=False)
+print(network.broadcast_address)   # 192.168.100.255
+```
+
+**Neden önemli?**
+
+Bir bilgisayarda birden fazla ağ arayüzü olabilir:
+
+```
+Ethernet adapter Ethernet 2  → 192.168.56.1    (VirtualBox - sanal)
+Wireless LAN adapter Wi-Fi   → 192.168.100.17  (gerçek ağ)
+```
+
+`255.255.255.255` gönderilirken işletim sistemi "en uygun" arayüzü seçer ve
+bu **sanal** adaptörü seçebilir. Paketler sanal kabloya gider, WiFi'deki
+arkadaşınıza asla ulaşmaz.
+
+Subnet broadcast'u (`192.168.100.255`) ise **hangi ağa ait olduğu belli** olduğu
+için doğru arayüzden çıkar.
+
+**Öğrenci sorusu:** "Neden iki bilgisayar birbirini göremiyordu?"
+Cihazın IP'si sanal adaptör seçildiği için broadcast paketleri yanlış
+arayüzden çıkmıştı.
+
+---
+
+## 5.2 Arayüz Seçimi (Default Gateway)
+
+Hangi adaptörün "gerçek ağ" olduğunu nasıl anlarız?
+
+**Default Gateway** = o ağdan dışarı (internete) çıkış kapısı.
+
+```
+Wi-Fi:  IP 192.168.100.17  Gateway 192.168.100.1  → GERÇEK AĞ
+Eth 2:  IP 192.168.56.1    Gateway (yok)          → SANAL
+```
+
+Sıralama kuralı:
+1. Gateway'i olan + sanal olmayan adaptör
+2. Sanal olmayan adaptör (gateway yoksa - sadece switch'e bağlı durum)
+3. Gateway'i olan herhangi biri
+
+**Sanal adaptör tespiti:**
+- Ada bakılır: "VirtualBox", "Hyper-V", "VMware", "Docker"...
+- MAC ön ekine bakılır: `0A-00-27` = VirtualBox, `00-15-5D` = Hyper-V
+- IP aralığına bakılır: `192.168.56.x` = VirtualBox varsayılanı
+
+---
+
 ## 6. Heartbeat (Yaşam Sinyali)
 
 Cihazın "ben buradayım" dediği periyodik sinyal.
